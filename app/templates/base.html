@@ -28,7 +28,7 @@
                 
                 <!-- Логотип -->
                 <a href="/" class="text-2xl font-bold flex items-center gap-2 text-blue-600 hover:text-blue-700 transition">
-                    SurveyPlatform
+                    Опросы
                 </a>
 
                 <!-- ДЕСКТОП МЕНЮ -->
@@ -206,6 +206,43 @@
         {% endif %}
     </div>
 
+    <div id="confirm-modal" class="fixed inset-0 z-[60] hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity backdrop-blur-sm"></div>
+
+        <div class="fixed inset-0 z-10 w-screen overflow-y-auto">
+            <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                <div class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg border border-gray-100">
+                    <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+                        <div class="sm:flex sm:items-start">
+                            <!-- Иконка (меняется через JS) -->
+                            <div id="confirm-modal-icon" class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">
+                                <!-- По умолчанию вопросительный знак -->
+                                <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                                </svg>
+                            </div>
+                            <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
+                                <h3 class="text-base font-semibold leading-6 text-gray-900" id="modal-title">Подтверждение</h3>
+                                <div class="mt-2">
+                                    <p class="text-sm text-gray-500" id="confirm-modal-text">Вы уверены?</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+                        <!-- Кнопка действия (текст и цвет меняются через JS) -->
+                        <button type="button" id="confirm-modal-btn-yes" class="inline-flex w-full justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 sm:ml-3 sm:w-auto transition">
+                            Подтвердить
+                        </button>
+                        <button type="button" id="confirm-modal-btn-no" class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto transition">
+                            Отмена
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- === JS === -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -270,20 +307,102 @@
             }
 
             // --- TOASTS ---
-            const toasts = document.querySelectorAll('.toast-message');
-            toasts.forEach((toast) => {
-                setTimeout(() => toast.classList.remove('translate-x-full', 'opacity-0'), 100);
+            window.createToast = function(message, type = 'success') {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                toast.className = `bg-green-600 text-white px-6 py-4 rounded-xl shadow-xl flex items-center gap-3 transform transition-all duration-500 translate-x-full opacity-0 pointer-events-auto mb-2`;
+                toast.innerHTML = `
+                    <div class="bg-white/20 p-1 rounded-full shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="font-bold text-sm">Уведомление</p>
+                        <p class="text-xs opacity-90">${message}</p>
+                    </div>
+                `;
+                container.appendChild(toast);
+                requestAnimationFrame(() => toast.classList.remove('translate-x-full', 'opacity-0'));
                 setTimeout(() => {
                     toast.classList.add('translate-x-full', 'opacity-0');
                     setTimeout(() => toast.remove(), 500);
                 }, 4000);
+            }
+
+            // Слушатель событий HTMX (HX-Trigger)
+            document.body.addEventListener("showToast", function(evt){
+                const message = evt.detail.value;
+                createToast(message);
             });
 
+            // Обработка URL параметров (?msg=...)
+            const urlParams = new URLSearchParams(window.location.search);
+            if(urlParams.get('msg') === 'saved') createToast('Ваши ответы сохранены');
+            if(urlParams.get('msg') === 'survey_created') createToast('Опрос успешно создан');
+            if(urlParams.get('msg') === 'password_updated') createToast('Пароль успешно обновлен');
+            
             if (window.location.search.includes('msg=')) {
                 const url = new URL(window.location);
                 url.searchParams.delete('msg');
                 window.history.replaceState({}, '', url);
             }
+        });
+
+        // Логика кастомного подтверждения HTMX
+        document.addEventListener("htmx:confirm", function(e) {
+            // ВАЖНО: Если вопроса нет, значит это не то событие, которое нам нужно.
+            // HTMX иногда может вызвать confirm событие без вопроса, если нет hx-confirm.
+            if (!e.detail.question) return;
+
+            e.preventDefault();
+            
+            const modal = document.getElementById("confirm-modal");
+            const modalText = document.getElementById("confirm-modal-text");
+            const btnYes = document.getElementById("confirm-modal-btn-yes");
+            const btnNo = document.getElementById("confirm-modal-btn-no");
+            const iconContainer = document.getElementById("confirm-modal-icon");
+            const iconSvg = iconContainer.querySelector("svg");
+
+            if (!modal) return;
+
+            // 1. Устанавливаем текст
+            modalText.textContent = e.detail.question;
+
+            // 2. Настройка стиля (Красный или Синий)
+            const triggerEl = e.target;
+            const confirmBtnText = triggerEl.getAttribute('data-confirm-text') || 'Подтвердить';
+            const confirmType = triggerEl.getAttribute('data-confirm-type') || 'primary';
+
+            btnYes.textContent = confirmBtnText;
+            btnYes.className = "inline-flex w-full justify-center rounded-md px-3 py-2 text-sm font-semibold text-white shadow-sm sm:ml-3 sm:w-auto transition";
+            iconContainer.className = "mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full sm:mx-0 sm:h-10 sm:w-10";
+
+            if (confirmType === 'danger') {
+                btnYes.classList.add('bg-red-600', 'hover:bg-red-500');
+                iconContainer.classList.add('bg-red-100');
+                iconSvg.classList.add('text-red-600');
+                iconSvg.classList.remove('text-blue-600');
+                iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />';
+            } else {
+                btnYes.classList.add('bg-blue-600', 'hover:bg-blue-500');
+                iconContainer.classList.add('bg-blue-100');
+                iconSvg.classList.remove('text-red-600');
+                iconSvg.classList.add('text-blue-600');
+                iconSvg.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />';
+            }
+
+            // 3. Показываем окно
+            modal.classList.remove("hidden");
+
+            // 4. Обработчики
+            btnYes.onclick = function() {
+                e.detail.issueRequest(true);
+                modal.classList.add("hidden");
+            };
+            btnNo.onclick = function() {
+                modal.classList.add("hidden");
+            };
         });
     </script>
 

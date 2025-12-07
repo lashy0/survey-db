@@ -1,14 +1,16 @@
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, Form
+from fastapi import APIRouter, Depends, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models import User, Survey, Question, Option, Tag, SurveyStatus, QuestionType
+from app.models import User, Survey, Question, Option, Tag, SurveyStatus, QuestionType, UserRole, SurveyResponse
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
 templates = Jinja2Templates(directory="app/templates")
@@ -160,3 +162,77 @@ async def create_survey(
     await db.commit()
     
     return RedirectResponse(url="/?msg=survey_created", status_code=303)
+
+@router.delete("/{survey_id}/delete")
+async def delete_survey(
+    request: Request,
+    survey_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Удаление опроса и обновление статистики."""
+    # 1. Поиск и проверки
+    survey = await db.get(Survey, survey_id)
+    if not survey:
+        raise HTTPException(status_code=404, detail="Опрос не найден")
+    
+    if survey.author_id != user.user_id and user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Нет прав на удаление")
+
+    # 2. Удаление
+    await db.delete(survey)
+    await db.commit()
+
+    # 3. ПОЛУЧЕНИЕ ОБНОВЛЕННЫХ ДАННЫХ
+    created_count = await db.scalar(
+        select(func.count()).select_from(Survey).where(Survey.author_id == user.user_id)
+    )
+
+    taken_query = (
+        select(SurveyResponse)
+        .where(SurveyResponse.user_id == user.user_id)
+        .options(selectinload(SurveyResponse.survey))
+        .order_by(SurveyResponse.started_at.desc())
+    )
+    taken_responses = (await db.execute(taken_query)).scalars().all()
+    taken_count = len(taken_responses)
+
+    # 4. ФОРМИРОВАНИЕ ОТВЕТА (HTMX OOB)
+    # Пустая строка удалит саму строку опроса из таблицы (hx-target)
+    content = ""
+
+    # OOB 1: Обновляем счетчик созданных (используем точные ID)
+    content += f'<p id="created-count" hx-swap-oob="true" class="text-3xl font-bold text-green-600 mt-2">{created_count}</p>'
+
+    # OOB 2: Обновляем счетчик пройденных
+    content += f'<p id="taken-count" hx-swap-oob="true" class="text-3xl font-bold text-blue-600 mt-2">{taken_count}</p>'
+
+    # OOB 3: Обновляем список истории
+    history_items = ""
+    if taken_responses:
+        for resp in taken_responses:
+            status = "Завершен" if resp.completed_at else "Начат"
+            status_color = "bg-green-100 text-green-700" if resp.completed_at else "bg-yellow-100 text-yellow-700"
+            
+            history_items += f"""
+            <a href="/surveys/{resp.survey.survey_id}" class="flex justify-between items-center p-3 rounded-lg hover:bg-blue-50 transition border border-transparent hover:border-blue-100 group/item">
+                <div>
+                    <p class="font-medium text-gray-800 group-hover/item:text-blue-700">{resp.survey.title}</p>
+                    <p class="text-xs text-gray-500">{resp.started_at.strftime('%d.%m.%Y')}</p>
+                </div>
+                <span class="text-xs font-semibold px-2 py-1 rounded {status_color}">{status}</span>
+            </a>
+            """
+        # Важно: hx-swap-oob="true" заменит элемент с id="history-list" целиком
+        history_html = f'<div id="history-list" hx-swap-oob="true"><div class="space-y-3">{history_items}</div></div>'
+    else:
+        history_html = '<div id="history-list" hx-swap-oob="true"><p class="text-gray-500 text-sm text-center py-4">Вы пока не проходили опросы.</p></div>'
+    
+    content += history_html
+
+    response = HTMLResponse(content=content, status_code=200)
+    
+    trigger_data = {"showToast": "Опрос успешно удален"}
+    response.headers["HX-Trigger"] = json.dumps(trigger_data)
+    
+    return response

@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_user
 from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash
-from app.models import User
+from app.models import User, Survey, SurveyResponse
 
 router = APIRouter(prefix="/users", tags=["users"])
 templates = Jinja2Templates(directory="app/templates")
@@ -14,13 +16,44 @@ templates = Jinja2Templates(directory="app/templates")
 @router.get("/me", response_class=HTMLResponse)
 async def read_users_me(
     request: Request,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Profile page. Only accessible if logged in."""
+    """Profile page with stats."""
+    
+    # 1. Загружаем созданные опросы (сортируем по дате)
+    created_surveys_query = (
+        select(Survey)
+        .where(Survey.author_id == current_user.user_id)
+        .order_by(Survey.created_at.desc())
+    )
+    created_surveys = (await db.execute(created_surveys_query)).scalars().all()
+    created_count = len(created_surveys)
+
+    # 2. Загружаем пройденные опросы (уникальные по survey_id)
+    # Нам нужно название опроса, поэтому делаем join или подгружаем связь
+    # Важно: берем только completed_at IS NOT NULL, если считаем только завершенные
+    taken_surveys_query = (
+        select(SurveyResponse)
+        .where(SurveyResponse.user_id == current_user.user_id)
+        .options(selectinload(SurveyResponse.survey)) # Грузим сам опрос
+        .order_by(SurveyResponse.started_at.desc())
+    )
+    taken_responses = (await db.execute(taken_surveys_query)).scalars().all()
+    taken_count = len(taken_responses)
+
     return templates.TemplateResponse(
         "users/profile.html", 
-        {"request": request, "user": current_user}
+        {
+            "request": request, 
+            "user": current_user,
+            "created_surveys": created_surveys,
+            "created_count": created_count,
+            "taken_responses": taken_responses,
+            "taken_count": taken_count
+        }
     )
+
 
 # --- Смена пароля ---
 
