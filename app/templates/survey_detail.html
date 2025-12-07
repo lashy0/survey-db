@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto py-8">
+    
+    <!-- 1. Статус прохождения (Верхний баннер) -->
+    {% if existing_response and not is_readonly %}
+    <div class="mb-6 bg-green-50 border-l-4 border-green-500 text-green-800 p-4 rounded shadow-sm flex items-start gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-green-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+            <p class="font-bold">Ответы сохранены!</p>
+            <p class="text-sm mt-1">Вы можете изменить их в любое время, пока опрос активен.</p>
+            <p class="text-xs text-green-600 mt-2">Последнее обновление: {{ existing_response.completed_at.strftime('%d.%m.%Y %H:%M') }}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Предупреждение о Read-Only -->
+    {% if is_readonly %}
+    <div class="mb-6 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 p-4 rounded shadow-sm">
+        <p class="font-bold">Опрос завершен</p>
+        <p class="text-sm">Прием ответов закрыт. Вы просматриваете режим чтения.</p>
+    </div>
+    {% endif %}
+
+    <!-- Шапка опроса -->
+    <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 mb-6">
+        <div class="flex flex-wrap gap-2 mb-4">
+            {% for tag in survey.tags %}
+            <span class="bg-blue-50 text-blue-600 text-xs font-semibold px-3 py-1 rounded-full">
+                #{{ tag.name }}
+            </span>
+            {% endfor %}
+        </div>
+        
+        <h1 class="text-3xl font-bold text-gray-900 mb-3">{{ survey.title }}</h1>
+        <p class="text-gray-600 text-lg leading-relaxed">{{ survey.description }}</p>
+        
+        <div class="mt-6 flex items-center gap-4 text-sm text-gray-500">
+            <span>📅 {{ survey.created_at.strftime('%d.%m.%Y') }}</span>
+            <span class="flex items-center gap-1">
+                👤 Автор: <span class="font-medium text-gray-700">{{ survey.author.full_name if survey.author else "Неизвестен" }}</span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Форма -->
+    <form id="survey-form" action="/surveys/{{ survey.survey_id }}/submit" method="post" class="space-y-6">
+        
+        {% for question in survey.questions %}
+        {% set user_answers_list = existing_answers.get(question.question_id, []) %}
+        
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden transition hover:shadow-md group">
+            <div class="absolute top-0 right-0 bg-gray-50 text-gray-400 text-xs font-bold px-3 py-1 rounded-bl-xl border-l border-b border-gray-100">
+                #{{ question.position }}
+            </div>
+
+            <h3 class="text-lg font-bold text-gray-800 mb-4 pr-8">
+                {{ question.question_text }}
+                {% if question.is_required %}<span class="text-red-500">*</span>{% endif %}
+            </h3>
+
+            <div class="space-y-3">
+                <!-- SINGLE CHOICE -->
+                {% if question.question_type.value == 'single_choice' %}
+                    {% for option in question.options %}
+                    <label class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition relative overflow-hidden">
+                        <input type="radio" name="q_{{ question.question_id }}" value="{{ option.option_id }}" 
+                               class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300 survey-input"
+                               {% if option.option_id in user_answers_list %}checked{% endif %}
+                               {% if question.is_required %}required{% endif %}
+                               {% if is_readonly %}disabled{% endif %}>
+                        <span class="ml-3 text-gray-700">{{ option.option_text }}</span>
+                        <!-- Подсветка выбранного -->
+                        {% if option.option_id in user_answers_list %}
+                        <div class="absolute inset-0 bg-blue-50/50 pointer-events-none border-2 border-blue-100 rounded-lg"></div>
+                        {% endif %}
+                    </label>
+                    {% endfor %}
+
+                <!-- MULTIPLE CHOICE -->
+                {% elif question.question_type.value == 'multiple_choice' %}
+                    {% for option in question.options %}
+                    <label class="flex items-center p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition relative">
+                        <input type="checkbox" name="q_{{ question.question_id }}" value="{{ option.option_id }}" 
+                               class="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded survey-input"
+                               {% if option.option_id in user_answers_list %}checked{% endif %}
+                               {% if is_readonly %}disabled{% endif %}>
+                        <span class="ml-3 text-gray-700">{{ option.option_text }}</span>
+                        {% if option.option_id in user_answers_list %}
+                        <div class="absolute inset-0 bg-blue-50/50 pointer-events-none border-2 border-blue-100 rounded-lg"></div>
+                        {% endif %}
+                    </label>
+                    {% endfor %}
+
+                <!-- RATING -->
+                {% elif question.question_type.value == 'rating' %}
+                    <div class="flex gap-4 items-center justify-center sm:justify-start">
+                        {% for option in question.options %}
+                        <label class="cursor-pointer group/rating">
+                            <input type="radio" name="q_{{ question.question_id }}" value="{{ option.option_id }}" class="peer sr-only survey-input"
+                                   {% if option.option_id in user_answers_list %}checked{% endif %}
+                                   {% if question.is_required %}required{% endif %}
+                                   {% if is_readonly %}disabled{% endif %}>
+                            <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold transition border-2 
+                                        {% if option.option_id in user_answers_list %}
+                                            border-blue-300 bg-blue-50 text-blue-600 ring-2 ring-offset-1 ring-blue-100
+                                        {% else %}
+                                            border-gray-300 text-gray-600
+                                        {% endif %}
+                                        group-hover:border-blue-400
+                                        peer-checked:border-blue-600 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:ring-0">
+                                {{ option.option_text }}
+                            </div>
+                        </label>
+                        {% endfor %}
+                    </div>
+
+                <!-- TEXT ANSWER -->
+                {% elif question.question_type.value == 'text_answer' %}
+                    <textarea name="q_{{ question.question_id }}" rows="3" 
+                              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition survey-input"
+                              placeholder="Ваш ответ..."
+                              {% if question.is_required %}required{% endif %}
+                              {% if is_readonly %}disabled{% endif %}>{{ user_answers_list[0] if user_answers_list else '' }}</textarea>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Кнопка отправки -->
+        {% if not is_readonly %}
+        <div class="flex justify-end pt-8 pb-4">
+            <button type="submit" id="submit-btn" disabled
+                    class="group relative flex items-center justify-center bg-green-600 text-white px-10 py-4 rounded-xl font-bold text-lg shadow-lg 
+                           transition-all duration-200
+                           disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none bg-gray-400">
+                
+                <!-- Текст кнопки -->
+                <span id="btn-text">
+                    {% if existing_response %}Сохранить изменения{% else %}Завершить опрос{% endif %}
+                </span>
+
+                <!-- Спиннер загрузки (скрыт по умолчанию) -->
+                <span id="btn-spinner" class="absolute hidden">
+                    <svg class="animate-spin h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
+            </button>
+        </div>
+        {% endif %}
+    </form>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('survey-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        
+        if (!form || !submitBtn) return;
+
+        // --- 1. Умная проверка изменений (Dirty Check) ---
+        const inputs = form.querySelectorAll('.survey-input');
+
+        function checkDirty() {
+            let isDirty = false;
+            
+            inputs.forEach(input => {
+                if (input.type === 'checkbox' || input.type === 'radio') {
+                    // Для чекбоксов и радио сравниваем checked с defaultChecked
+                    if (input.checked !== input.defaultChecked) {
+                        isDirty = true;
+                    }
+                } else {
+                    // Для текста сравниваем value с defaultValue
+                    if (input.value !== input.defaultValue) {
+                        isDirty = true;
+                    }
+                }
+            });
+
+            // Обновляем состояние кнопки
+            if (isDirty) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('bg-gray-400');
+                submitBtn.classList.add('bg-green-600', 'hover:bg-green-700', 'hover:-translate-y-0.5');
+            } else {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('bg-gray-400');
+                submitBtn.classList.remove('bg-green-600', 'hover:bg-green-700', 'hover:-translate-y-0.5');
+            }
+        }
+
+        // Слушаем события изменений на всех инпутах
+        form.addEventListener('input', checkDirty);
+        form.addEventListener('change', checkDirty);
+
+        // --- 2. Индикатор загрузки при отправке ---
+        form.addEventListener('submit', () => {
+            // Блокируем кнопку, чтобы не нажать дважды
+            submitBtn.disabled = true;
+            submitBtn.classList.add('cursor-wait');
+            
+            // Скрываем текст, показываем спиннер
+            btnText.classList.add('invisible');
+            btnSpinner.classList.remove('hidden');
+        });
+    });
+</script>
+{% endblock %}

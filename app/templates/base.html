@@ -171,14 +171,24 @@
 
     <!-- TOAST -->
     <div id="toast-container" class="fixed top-20 right-5 z-50 flex flex-col gap-2 w-full max-w-sm px-4 md:px-0 pointer-events-none">
-        {% if request.query_params.get("msg") == "password_updated" %}
+        {% set msg_type = request.query_params.get("msg") %}
+        
+        {% if msg_type in ['password_updated', 'saved'] %}
         <div class="toast-message bg-green-500 text-white px-6 py-4 rounded-xl shadow-xl flex items-center gap-3 transform transition-all duration-500 translate-x-full opacity-0 pointer-events-auto">
-            <div class="bg-white/20 p-1 rounded-full">
+            <div class="bg-white/20 p-1 rounded-full shrink-0">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
             </div>
-            <span class="font-medium">Пароль успешно обновлен!</span>
+            
+            <div>
+                {% if msg_type == 'password_updated' %}
+                    <span class="font-medium">Пароль успешно обновлен!</span>
+                {% elif msg_type == 'saved' %}
+                    <p class="font-bold text-sm">Успешно!</p>
+                    <p class="text-xs opacity-90">Ваши ответы были сохранены.</p>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
     </div>
