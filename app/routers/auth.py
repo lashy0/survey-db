@@ -11,31 +11,51 @@ import pwdlib.exceptions
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password, create_refresh_token
 from app.models import User
 
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(directory="app/templates")
 
-# --- Вспомогательная функция (не эндпоинт) ---
 def create_login_response(user_email: str) -> RedirectResponse:
-    """Создает ответ с кукой авторизации"""
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    """Создает ответ с ДВУМЯ токенами"""
+    
+    # 1. Access Token (короткий)
+    access_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user_email}, expires_delta=access_token_expires
+        data={"sub": user_email}, expires_delta=access_expires
+    )
+    
+    # 2. Refresh Token (длинный)
+    refresh_expires = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token = create_refresh_token(
+        data={"sub": user_email}, expires_delta=refresh_expires
     )
     
     response = RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    
+    # Кука 1: Access
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        max_age=1800,
-        expires=1800,
+        max_age=int(access_expires.total_seconds()),
         samesite="lax",
         secure=False 
     )
+    
+    # Кука 2: Refresh (Путь можно ограничить, но для Middleware проще оставить глобальным)
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=int(refresh_expires.total_seconds()),
+        samesite="lax",
+        secure=False 
+    )
+    
     return response
+
 
 # --- Эндпоинты ---
 
@@ -121,4 +141,5 @@ async def login_user(
 async def logout():
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
     return response

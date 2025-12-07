@@ -146,7 +146,8 @@ async def submit_survey(
             user_id=user.user_id,
             started_at=datetime.now(timezone.utc),
             ip_address=request.client.host,
-            device_type="Web"
+            device_type="Web",
+            answers=[]
         )
         db.add(response_obj)
         await db.flush() # Чтобы получить response_id

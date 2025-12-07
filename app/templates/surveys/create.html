@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Подключаем SortableJS для перетаскивания -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
+<div class="max-w-4xl mx-auto py-8">
+    
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">Новый опрос</h1>
+        
+        <!-- Кнопка ОТМЕНА -->
+        <a href="/" class="px-5 py-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 hover:text-gray-800 transition font-medium">
+            Отмена
+        </a>
+    </div>
+
+    <form action="/surveys/create" method="post" class="space-y-8" id="create-form">
+        
+        <!-- Основная инфо -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">Название опроса</label>
+                <input type="text" name="title" id="input-title" required
+                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 transition"
+                       oninput="validateForm()">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">Описание</label>
+                <textarea name="description" id="input-desc" rows="3" required
+                          class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 transition"
+                          oninput="validateForm()"></textarea>
+            </div>
+
+            <!-- Умные ТЕГИ -->
+            <div>
+                <label class="block text-sm font-bold text-gray-700 mb-2">Теги</label>
+                
+                <div class="flex gap-2 mb-2">
+                    <input type="text" id="tag-input" 
+                           class="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                           placeholder="Введите тег и нажмите Enter">
+                    <button type="button" onclick="addTag()" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200">
+                        Добавить
+                    </button>
+                </div>
+
+                <div id="tags-container" class="flex flex-wrap gap-2 min-h-[30px]">
+                    <!-- Сюда JS будет добавлять теги -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Вопросы -->
+        <div class="space-y-4">
+            <h2 class="text-xl font-bold text-gray-800">Вопросы</h2>
+            
+            <div id="questions-container" class="space-y-4">
+                <!-- HTMX вставит сюда первый вопрос -->
+                <div hx-get="/surveys/partials/question?index=0" hx-trigger="load" hx-swap="outerHTML"></div>
+            </div>
+
+            <button type="button" 
+                    class="w-full py-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-semibold hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition"
+                    hx-get="/surveys/partials/question"
+                    hx-vals='js:{"index": Math.floor(Math.random() * 10000)}' 
+                    hx-target="#questions-container"
+                    hx-swap="beforeend"
+                    hx-on::after-request="updateOrder(); validateForm();">
+                + Добавить вопрос
+            </button>
+        </div>
+
+        <!-- Футер -->
+        <div class="flex justify-end pt-6 border-t border-gray-200">
+            <!-- Кнопка с лоадером -->
+            <button type="submit" id="submit-btn" disabled
+                    class="group relative flex items-center justify-center bg-green-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg transition transform 
+                           disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 disabled:shadow-none hover:-translate-y-0.5">
+                
+                <span id="btn-text">Создать опрос</span>
+                
+                <!-- Спиннер -->
+                <span id="btn-spinner" class="absolute hidden">
+                    <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+    // --- 1. ЛОГИКА ТЕГОВ ---
+    const tagInput = document.getElementById('tag-input');
+    const tagsContainer = document.getElementById('tags-container');
+
+    tagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addTag();
+        }
+    });
+
+    function addTag() {
+        const val = tagInput.value.trim();
+        if (!val) return;
+        const existing = document.querySelectorAll('input[name="tag_names"]');
+        for (let el of existing) {
+            if (el.value.toLowerCase() === val.toLowerCase()) {
+                tagInput.value = ''; return;
+            }
+        }
+        const tagEl = document.createElement('div');
+        tagEl.className = "bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2 border border-blue-100";
+        tagEl.innerHTML = `<span>#${val}</span><input type="hidden" name="tag_names" value="${val}"><button type="button" onclick="this.parentElement.remove(); validateForm();" class="text-blue-400 hover:text-red-500 font-bold">&times;</button>`;
+        tagsContainer.appendChild(tagEl);
+        tagInput.value = '';
+        validateForm();
+    }
+
+    // --- 2. DRAG AND DROP ---
+    const questionsContainer = document.getElementById('questions-container');
+    new Sortable(questionsContainer, {
+        handle: '.drag-handle',
+        animation: 150,
+        ghostClass: 'bg-blue-50',
+        onEnd: updateOrder
+    });
+
+    function updateOrder() {
+        document.querySelectorAll('.question-block').forEach((block, index) => {
+            const input = block.querySelector('.question-position');
+            if (input) input.value = index + 1;
+        });
+    }
+
+    document.body.addEventListener('htmx:afterSwap', (evt) => {
+        if (evt.target.id === 'questions-container') {
+            updateOrder();
+            validateForm();
+        }
+    });
+
+    // --- 3. ВАЛИДАЦИЯ И ОТПРАВКА ---
+    const form = document.getElementById('create-form');
+    const btn = document.getElementById('submit-btn');
+    const btnText = document.getElementById('btn-text');
+    const btnSpinner = document.getElementById('btn-spinner');
+
+    function validateForm() {
+        const title = document.getElementById('input-title').value.trim();
+        const desc = document.getElementById('input-desc').value.trim();
+        const hasTags = document.querySelectorAll('input[name="tag_names"]').length > 0;
+        
+        let questionsValid = false;
+        const questionBlocks = document.querySelectorAll('.question-block');
+
+        if (questionBlocks.length > 0) {
+            questionsValid = true;
+            for (let block of questionBlocks) {
+                const qText = block.querySelector('input[name*="[text]"]').value.trim();
+                if (!qText) { questionsValid = false; break; }
+
+                const typeSelect = block.querySelector('select[name*="[type]"]');
+                if (typeSelect.value === 'single_choice' || typeSelect.value === 'multiple_choice') {
+                    const options = block.querySelectorAll('.option-row input');
+                    let hasValidOption = false;
+                    for (let opt of options) {
+                        if (opt.value.trim() !== "") { hasValidOption = true; break; }
+                    }
+                    if (!hasValidOption) { questionsValid = false; break; }
+                }
+            }
+        }
+
+        if (title && desc && hasTags && questionsValid) {
+            btn.disabled = false;
+            btn.classList.remove('disabled:opacity-50', 'disabled:cursor-not-allowed', 'disabled:bg-gray-400');
+            btn.classList.add('hover:bg-green-700', 'hover:-translate-y-0.5');
+        } else {
+            btn.disabled = true;
+            btn.classList.add('disabled:opacity-50', 'disabled:cursor-not-allowed', 'disabled:bg-gray-400');
+            btn.classList.remove('hover:bg-green-700', 'hover:-translate-y-0.5');
+        }
+    }
+
+    // Обработка отправки (показать спиннер)
+    form.addEventListener('submit', () => {
+        btn.disabled = true; // Блокируем кнопку
+        btn.classList.add('cursor-wait'); // Курсор ожидания
+        btnText.classList.add('invisible'); // Прячем текст
+        btnSpinner.classList.remove('hidden'); // Показываем спиннер
+    });
+
+    setTimeout(validateForm, 500);
+</script>
+{% endblock %}

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from app.routers import general, admin, auth, users
+from app.routers import general, admin, auth, users, surveys
+from app.core.middleware import refresh_token_middleware
 
 def create_app() -> FastAPI:
     """
@@ -18,11 +19,15 @@ def create_app() -> FastAPI:
     # Mount static files (if you have CSS/JS files locally)
     # app_instance.mount("/static", StaticFiles(directory="static"), name="static")
 
+    # Middleware
+    app_instance.middleware("http")(refresh_token_middleware)
+
     # Include routers
-    app_instance.include_router(general.router)
     app_instance.include_router(admin.router)
     app_instance.include_router(auth.router)
     app_instance.include_router(users.router)
+    app_instance.include_router(surveys.router)
+    app_instance.include_router(general.router)
 
     return app_instance
 

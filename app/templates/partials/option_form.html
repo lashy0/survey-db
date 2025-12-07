@@ -1,0 +1,11 @@
+<div class="flex items-center gap-2 option-row">
+    <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
+    <input type="text" name="questions[{{ q_index }}][options][{{ o_index }}]" 
+           class="flex-grow px-3 py-1.5 border border-gray-200 rounded-md text-sm focus:border-blue-500 focus:outline-none question-input"
+           placeholder="Вариант ответа" 
+           oninput="validateForm()"> <!-- Убрали required, добавили oninput для нашей JS валидации -->
+    
+    <button type="button" onclick="this.closest('.option-row').remove(); validateForm();" class="text-gray-400 hover:text-red-500">
+        &times;
+    </button>
+</div>
