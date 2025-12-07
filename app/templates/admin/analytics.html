@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto py-8">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">Аналитическая панель</h1>
+        <span class="bg-purple-100 text-purple-800 text-xs font-semibold px-3 py-1 rounded-full uppercase tracking-wide">
+            Admin Area
+        </span>
+    </div>
+
+    <!-- 1. KPI CARDS -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <p class="text-gray-500 text-sm font-medium uppercase">Всего пользователей</p>
+            <p class="text-4xl font-bold text-gray-800 mt-2">{{ kpi.users }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <p class="text-gray-500 text-sm font-medium uppercase">Создано опросов</p>
+            <p class="text-4xl font-bold text-blue-600 mt-2">{{ kpi.surveys }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <p class="text-gray-500 text-sm font-medium uppercase">Всего ответов</p>
+            <p class="text-4xl font-bold text-green-600 mt-2">{{ kpi.responses }}</p>
+        </div>
+    </div>
+
+    <!-- 2. CHARTS ROW 1 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        <!-- Динамика (Line Chart) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Активность (ответы по дням)</h3>
+            <div id="chart-timeline" class="w-full h-80"></div>
+        </div>
+
+        <!-- Воронка (Bar/Funnel) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Воронка конверсии</h3>
+            <div id="chart-funnel" class="w-full h-80"></div>
+        </div>
+    </div>
+
+    <!-- 3. CHARTS ROW 2 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        <!-- Теги (Pie Chart) -->
+        <div class="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Интересы аудитории</h3>
+            <div id="chart-tags" class="w-full h-64"></div>
+        </div>
+
+        <!-- Аномалии (Table) -->
+        <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    Подозрительно быстрые (Z-Score > 1.5)
+                </h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm text-left text-gray-500">
+                    <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3">Пользователь</th>
+                            <th class="px-4 py-3">Опрос</th>
+                            <th class="px-4 py-3">Время</th>
+                            <th class="px-4 py-3">Среднее</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in anomalies %}
+                        <tr class="bg-white border-b hover:bg-gray-50">
+                            <td class="px-4 py-3 font-medium text-gray-900">
+                                {{ row.full_name }}<br>
+                                <span class="text-xs text-gray-400">{{ row.email }}</span>
+                            </td>
+                            <td class="px-4 py-3 truncate max-w-xs">{{ row.title }}</td>
+                            <td class="px-4 py-3 font-bold text-red-600">{{ row.user_sec | round(1) }} сек</td>
+                            <td class="px-4 py-3 text-gray-400">~ {{ row.avg_sec | round(1) }} сек</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="px-4 py-4 text-center text-gray-400">Аномалий не найдено</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Инициализация графиков Plotly -->
+<script>
+    // 1. Time Series
+    const timeData = {
+        x: {{ time_series_data.dates | tojson }},
+        y: {{ time_series_data.counts | tojson }},
+        type: 'scatter',
+        mode: 'lines+markers',
+        line: {shape: 'spline', color: '#2563eb'},
+        fill: 'tozeroy'
+    };
+    Plotly.newPlot('chart-timeline', [timeData], {
+        margin: {t: 10, l: 30, r: 10, b: 30},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+    }, {displayModeBar: false, responsive: true});
+
+    // 2. Funnel
+    // ОБРАТИТЕ ВНИМАНИЕ: funnel_data.counts вместо .values
+    const funnelData = {
+        x: {{ funnel_data.labels | tojson }},
+        y: {{ funnel_data.counts | tojson }}, 
+        type: 'bar',
+        marker: {
+            color: ['#93c5fd', '#3b82f6', '#1e40af']
+        },
+        text: {{ funnel_data.counts | tojson }}.map(String),
+        textposition: 'auto',
+    };
+    Plotly.newPlot('chart-funnel', [funnelData], {
+        margin: {t: 10, l: 30, r: 10, b: 30},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)'
+    }, {displayModeBar: false, responsive: true});
+
+    // 3. Tags (Donut)
+    // ОБРАТИТЕ ВНИМАНИЕ: tags_data.counts вместо .values
+    const tagsData = {
+        labels: {{ tags_data.labels | tojson }},
+        values: {{ tags_data.counts | tojson }},
+        type: 'pie',
+        hole: 0.4,
+        marker: {
+            colors: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
+        }
+    };
+    Plotly.newPlot('chart-tags', [tagsData], {
+        margin: {t: 0, l: 0, r: 0, b: 0},
+        showlegend: true,
+        legend: {orientation: 'h', y: -0.1}
+    }, {displayModeBar: false, responsive: true});
+</script>
+{% endblock %}
