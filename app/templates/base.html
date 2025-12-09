@@ -350,6 +350,7 @@
             if(urlParams.get('msg') === 'saved') createToast('Ваши ответы сохранены');
             if(urlParams.get('msg') === 'survey_created') createToast('Опрос успешно создан');
             if(urlParams.get('msg') === 'password_updated') createToast('Пароль успешно обновлен');
+            if(urlParams.get('msg') === 'profile_updated') createToast('Профиль успешно обновлен');
             
             if (window.location.search.includes('msg=')) {
                 const url = new URL(window.location);
