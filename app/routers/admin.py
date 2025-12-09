@@ -1,11 +1,12 @@
+import json
 from typing import Optional, Union
-from fastapi import APIRouter, Request, Depends, HTTPException
+from datetime import datetime, date
+from fastapi import APIRouter, Request, Depends, HTTPException, Body
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, case, text, extract
-# Убрал distinct из импорта, будем использовать метод .distinct()
-from app.core.database import get_db
+from sqlalchemy import select, func, desc, case, text, extract, inspect
+from app.core.database import get_db, engine
 from app.core.deps import get_current_user
 from app.models import User, Survey, SurveyResponse, Tag, survey_tags, UserRole
 
@@ -194,4 +195,291 @@ async def get_anomalies_partial(
     return templates.TemplateResponse(
         "admin/partials/anomalies_table.html",
         {"request": request, "anomalies": anomalies_res}
+    )
+
+
+
+@router.get("/tables_view", response_class=HTMLResponse)
+async def view_tables_dashboard(
+    request: Request,
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    # ИСПОЛЬЗУЕМ SQLALCHEMY INSPECT (через run_sync для асинхронного engine)
+    def get_table_names(connection):
+        inspector = inspect(connection)
+        return inspector.get_table_names()
+
+    # Запускаем синхронную функцию в асинхронном контексте
+    async with engine.connect() as conn:
+        table_names = await conn.run_sync(get_table_names)
+    
+    # Сортируем для красоты
+    table_names.sort()
+
+    return templates.TemplateResponse(
+        "admin/tables.html",
+        {
+            "request": request,
+            "user": user,
+            "tables": table_names
+        }
+    )
+
+@router.get("/tables/data/{table_name}", response_class=HTMLResponse)
+async def get_table_data(
+    request: Request,
+    table_name: str,
+    page: int = 1,      # Добавили пагинацию
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    # Валидация имени таблицы (как и раньше)
+    def check_table_exists(connection):
+        inspector = inspect(connection)
+        return inspector.has_table(table_name)
+    
+    async with engine.connect() as conn:
+        if not await conn.run_sync(check_table_exists):
+            return HTMLResponse("Таблица не найдена")
+
+    # 1. Получаем колонки и PK
+    def get_table_info(connection):
+        inspector = inspect(connection)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_columns = pk_constraint['constrained_columns']
+        columns = [col['name'] for col in inspector.get_columns(table_name)]
+        return columns, pk_columns
+
+    async with engine.connect() as conn:
+        columns, pk_columns = await conn.run_sync(get_table_info)
+    
+    # Пока поддерживаем редактирование только таблиц с простым (одинарным) PK
+    pk_col = pk_columns[0] if pk_columns else None
+
+    pk_col_idx = 0
+    if pk_col and pk_col in columns:
+        pk_col_idx = columns.index(pk_col)
+
+    # 2. Получаем данные с пагинацией
+    offset = (page - 1) * limit
+    try:
+        # Считаем общее кол-во для пагинации
+        count_res = await db.execute(text(f'SELECT COUNT(*) FROM "{table_name}"'))
+        total_rows = count_res.scalar()
+
+        # Выбираем данные
+        # Важно: сортируем по PK, чтобы порядок был стабильным
+        order_clause = f'ORDER BY "{pk_col}"' if pk_col else ''
+        query = text(f'SELECT * FROM "{table_name}" {order_clause} LIMIT {limit} OFFSET {offset}')
+        result = await db.execute(query)
+        rows = result.all()
+    except Exception as e:
+        return HTMLResponse(f"Ошибка: {e}")
+
+    # Считаем всего страниц
+    total_pages = (total_rows + limit - 1) // limit
+
+    return templates.TemplateResponse(
+        "admin/partials/table_content.html",
+        {
+            "request": request,
+            "table_name": table_name,
+            "columns": columns,
+            "rows": rows,
+            "pk_col": pk_col,
+            "pk_col_idx": pk_col_idx,
+            "page": page,
+            "total_pages": total_pages,
+            "limit": limit
+        }
+    )
+
+@router.get("/tables/edit-form/{table_name}/{pk_val}", response_class=HTMLResponse)
+async def get_edit_form(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Возвращает форму редактирования для модального окна."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    # 1. Интроспекция (нужны колонки, типы и PK)
+    def get_info(connection):
+        inspector = inspect(connection)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_columns = pk_constraint['constrained_columns']
+        # Получаем детальную информацию о колонках (тип, nullable и т.д.)
+        columns = inspector.get_columns(table_name)
+        return columns, pk_columns
+
+    async with engine.connect() as conn:
+        columns_info, pk_columns = await conn.run_sync(get_info)
+    
+    pk_col = pk_columns[0] if pk_columns else None
+    if not pk_col:
+        return HTMLResponse("PK не найден")
+
+    # 2. Получаем данные строки
+    # Приводим pk_val к int если надо
+    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
+        
+    query = text(f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = :pk')
+    res = await db.execute(query, {"pk": pk_val_typed})
+    row = res.mappings().one_or_none() # Используем mappings() для доступа по имени
+    
+    if not row:
+        return HTMLResponse("Запись не найдена")
+
+    return templates.TemplateResponse(
+        "admin/partials/edit_modal.html",
+        {
+            "request": request,
+            "table_name": table_name,
+            "row": row,
+            "columns": columns_info, # Передаем метаданные колонок
+            "pk_col": pk_col,
+            "pk_val": pk_val
+        }
+    )
+
+@router.post("/tables/update-row/{table_name}/{pk_val}")
+async def update_table_row_modal(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    form_data = await request.form()
+    
+    # 1. Получаем информацию о типах колонок
+    def get_table_meta(connection):
+        inspector = inspect(connection)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_col = pk_constraint['constrained_columns'][0]
+        columns = inspector.get_columns(table_name)
+        # Создаем словарь: имя колонки -> тип (строкой или объектом)
+        col_types = {c['name']: c['type'] for c in columns}
+        return pk_col, col_types
+    
+    async with engine.connect() as conn:
+        pk_col, col_types = await conn.run_sync(get_table_meta)
+
+    # 2. Формируем запрос и конвертируем типы
+    set_clauses = []
+    params = {"pk": int(pk_val) if pk_val.isdigit() else pk_val}
+    
+    for col, val in form_data.items():
+        if col == pk_col: continue
+        
+        # Получаем тип колонки
+        col_type = str(col_types.get(col, '')).upper()
+        
+        set_clauses.append(f'"{col}" = :{col}')
+        
+        if val == "" or val == "NULL":
+            params[col] = None
+        else:
+            # --- КОНВЕРТАЦИЯ ТИПОВ ---
+            try:
+                if 'DATE' in col_type:
+                    # '1990-01-01' -> date object
+                    params[col] = datetime.strptime(val, '%Y-%m-%d').date()
+                elif 'TIMESTAMP' in col_type or 'DATETIME' in col_type:
+                    # Попытка парсинга с временем
+                    # HTML datetime-local дает формат 'YYYY-MM-DDTHH:MM'
+                    # Простой date input дает 'YYYY-MM-DD'
+                    if 'T' in val:
+                         params[col] = datetime.strptime(val, '%Y-%m-%dT%H:%M')
+                    else:
+                         params[col] = datetime.strptime(val, '%Y-%m-%d %H:%M:%S') # Или другой формат, который у вас в инпуте
+                elif 'INT' in col_type:
+                    params[col] = int(val)
+                elif 'BOOL' in col_type:
+                    params[col] = val.lower() == 'true'
+                else:
+                    # По умолчанию строка
+                    params[col] = val
+            except ValueError:
+                # Если не смогли распарсить, пробуем отправить как есть (Postgres может сам выкинуть ошибку)
+                # Или для дат это может быть формат с временем
+                if 'TIMESTAMP' in col_type:
+                     try:
+                         # Попробуем распарсить то, что пришло из БД ранее (если формат строки специфичный)
+                         params[col] = datetime.fromisoformat(val)
+                     except:
+                         params[col] = val
+                else:
+                    params[col] = val
+
+    if set_clauses:
+        query = text(f'UPDATE "{table_name}" SET {", ".join(set_clauses)} WHERE "{pk_col}" = :pk')
+        try:
+            await db.execute(query, params)
+            await db.commit()
+        except Exception as e:
+            return HTMLResponse(f"<div class='bg-red-100 text-red-700 p-4 rounded mb-4'>Ошибка БД: {e}</div>", status_code=200)
+
+    # Успех
+    return HTMLResponse(
+        '<div id="modal-container" hx-swap-oob="true"></div>', 
+        headers={"HX-Trigger": "tableUpdated"}
+    )
+
+@router.delete("/tables/row/delete/{table_name}/{pk_val}")
+async def delete_table_row(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Удаляет строку из таблицы."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    # 1. Получаем PK колонку (для безопасности и where clause)
+    def get_pk(connection):
+        # Обработка ошибки, если PK нет
+        try:
+            return inspect(connection).get_pk_constraint(table_name)['constrained_columns'][0]
+        except (IndexError, KeyError):
+            return None
+    
+    async with engine.connect() as conn:
+        pk_col = await conn.run_sync(get_pk)
+
+    if not pk_col:
+        return HTMLResponse("Невозможно удалить: у таблицы нет Primary Key", status_code=400)
+
+    # 2. Удаляем
+    # Приводим тип, если это число
+    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
+    
+    try:
+        query = text(f'DELETE FROM "{table_name}" WHERE "{pk_col}" = :pk')
+        await db.execute(query, {"pk": pk_val_typed})
+        await db.commit()
+    except Exception as e:
+        # Можно вернуть тост с ошибкой
+        return HTMLResponse(status_code=200, headers={"HX-Trigger": json.dumps({"showToast": f"Ошибка удаления: {e}"})})
+
+    # 3. Возвращаем пустой ответ (строка исчезнет) + Тост успеха
+    return HTMLResponse(
+        content="", 
+        status_code=200,
+        headers={"HX-Trigger": json.dumps({"showToast": "Запись удалена"})}
     )

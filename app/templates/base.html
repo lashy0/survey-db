@@ -86,6 +86,12 @@
                                         </svg>
                                         Аналитика
                                     </a>
+                                    <a href="/admin/tables_view" class="flex items-center gap-3 px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-50 hover:text-blue-600 transition">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                                        </svg>
+                                        База данных
+                                    </a>
                                     {% endif %}
                                 </div>
 
@@ -158,6 +164,9 @@
                         {% if user.role == 'admin' %}
                         <a href="/admin/analytics" class="flex items-center gap-3 px-3 py-3 text-gray-700 hover:bg-gray-50 hover:text-blue-600 rounded-xl transition">
                             Аналитика
+                        </a>
+                        <a href="/admin/tables_view" class="flex items-center gap-3 px-3 py-3 text-gray-700 hover:bg-gray-50 hover:text-blue-600 rounded-xl transition">
+                            База данных
                         </a>
                         {% endif %}
                     </div>
