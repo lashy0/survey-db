@@ -119,6 +119,33 @@ async def analytics_dashboard(
     
     anomalies_res = (await db.execute(anomalies_query)).all()
 
+    # --- 5. HEATMAP (День недели x Час) ---
+    # 0 = Sunday, 1 = Monday in PostgreSQL (или 1-7 isodow)
+    # Лучше использовать isodow: 1=Monday, 7=Sunday
+    heatmap_query = (
+        select(
+            extract('isodow', SurveyResponse.started_at).label("dow"),
+            extract('hour', SurveyResponse.started_at).label("hour"),
+            func.count(SurveyResponse.response_id).label("cnt")
+        )
+        .group_by("dow", "hour")
+    )
+    heatmap_res = (await db.execute(heatmap_query)).all()
+
+    heatmap_z = [[0 for _ in range(24)] for _ in range(7)]
+    
+    for row in heatmap_res:
+        d = int(row.dow) - 1 # 1..7 -> 0..6
+        h = int(row.hour)    # 0..23
+        if 0 <= d < 7 and 0 <= h < 24:
+            heatmap_z[d][h] = row.cnt
+
+    heatmap_data = {
+        "z": heatmap_z,
+        "x": [f"{h:02d}:00" for h in range(24)],
+        "y": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    }
+
     return templates.TemplateResponse(
         name="admin/analytics.html",
         context={
@@ -133,6 +160,7 @@ async def analytics_dashboard(
             "time_series_data": time_series_data,
             "tags_data": tags_data,
             "anomalies": anomalies_res,
+            "heatmap_data": heatmap_data,
             "all_surveys": all_surveys, # Передаем список опросов
             "selected_survey_id": survey_id # Передаем текущий выбор
         }
@@ -482,4 +510,103 @@ async def delete_table_row(
         content="", 
         status_code=200,
         headers={"HX-Trigger": json.dumps({"showToast": "Запись удалена"})}
+    )
+
+@router.get("/tables/create-form/{table_name}", response_class=HTMLResponse)
+async def get_create_form(
+    request: Request,
+    table_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Возвращает форму создания записи."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    # Интроспекция: получаем список колонок и их типы
+    def get_columns_info(connection):
+        inspector = inspect(connection)
+        # Получаем PK, чтобы (возможно) скрыть его из формы, если он auto-increment
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_col = pk_constraint['constrained_columns'][0] if pk_constraint['constrained_columns'] else None
+        
+        columns = inspector.get_columns(table_name)
+        return columns, pk_col
+
+    async with engine.connect() as conn:
+        columns, pk_col = await conn.run_sync(get_columns_info)
+
+    return templates.TemplateResponse(
+        "admin/partials/create_modal.html",
+        {
+            "request": request,
+            "table_name": table_name,
+            "columns": columns,
+            "pk_col": pk_col
+        }
+    )
+
+@router.post("/tables/create-row/{table_name}")
+async def create_table_row(
+    request: Request,
+    table_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Создает новую запись."""
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    form_data = await request.form()
+    
+    # Интроспекция для типов данных
+    def get_col_types(connection):
+        return {c['name']: c['type'] for c in inspect(connection).get_columns(table_name)}
+    
+    async with engine.connect() as conn:
+        col_types = await conn.run_sync(get_col_types)
+
+    # Формируем INSERT
+    cols = []
+    params = {}
+    
+    for col, val in form_data.items():
+        # Пропускаем пустые PK (обычно они SERIAL/AUTO_INCREMENT)
+        if val == "" and col == form_data.get("pk_col_name"):
+            continue
+            
+        cols.append(f'"{col}"')
+        
+        # Конвертация типов (аналогично update)
+        col_type = str(col_types.get(col, '')).upper()
+        
+        if val == "" or val == "NULL":
+             params[col] = None
+        else:
+             try:
+                if 'DATE' in col_type:
+                    params[col] = datetime.strptime(val, '%Y-%m-%d').date()
+                elif 'INT' in col_type:
+                    params[col] = int(val)
+                elif 'BOOL' in col_type:
+                    params[col] = val.lower() == 'true'
+                else:
+                    params[col] = val
+             except:
+                 params[col] = val # Fallback
+
+    if cols:
+        placeholders = [f":{c.replace('\"', '')}" for c in cols]
+        query = text(f'INSERT INTO "{table_name}" ({", ".join(cols)}) VALUES ({", ".join(placeholders)})')
+        
+        try:
+            await db.execute(query, params)
+            await db.commit()
+        except Exception as e:
+            return HTMLResponse(f"<div class='bg-red-100 text-red-700 p-4 rounded mb-4'>Ошибка: {e}</div>", status_code=200)
+
+    # Успех: Закрываем модалку и обновляем таблицу
+    return HTMLResponse(
+        '<div id="modal-container" hx-swap-oob="true"></div>', 
+        headers={"HX-Trigger": json.dumps({"tableUpdated": True, "showToast": "Запись создана"})}
     )

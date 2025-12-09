@@ -40,6 +40,14 @@
         </div>
     </div>
 
+    <!-- 2.5. HEATMAP ROW -->
+    <div class="mb-8">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Тепловая карта активности (День недели × Время)</h3>
+            <div id="chart-heatmap" class="w-full h-80"></div>
+        </div>
+    </div>
+
     <!-- 3. CHARTS ROW 2 -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
         <!-- Теги (Pie Chart) -->
@@ -141,6 +149,38 @@
         margin: {t: 0, l: 0, r: 0, b: 0},
         showlegend: true,
         legend: {orientation: 'h', y: -0.1}
+    }, {displayModeBar: false, responsive: true});
+
+    // 5. Heatmap
+    const heatmapData = [{
+        z: {{ heatmap_data.z | tojson }},
+        x: {{ heatmap_data.x | tojson }},
+        y: {{ heatmap_data.y | tojson }},
+        type: 'heatmap',
+        colorscale: [
+            [0, '#f8fafc'],    // 0: Фон (Slate-50)
+            [0.001, '#e0f2fe'], // 1: Очень светло (Sky-100)
+            [0.2, '#7dd3fc'],  // Мало (Sky-300)
+            [0.5, '#0ea5e9'],  // Средне (Sky-500)
+            [0.8, '#0369a1'],  // Много (Sky-700)
+            [1, '#0c4a6e']     // Максимум (Sky-900)
+        ],
+        showscale: true,
+        xgap: 2, // Отступ по горизонтали
+        ygap: 2, // Отступ по вертикали
+        hoverongaps: false
+    }];
+    
+    Plotly.newPlot('chart-heatmap', heatmapData, {
+        margin: {t: 10, l: 30, r: 10, b: 30},
+        yaxis: {
+            autorange: 'reversed', // Переворачивает ось Y (Пн будет сверху)
+            tickfont: {size: 11}
+        },
+        xaxis: {
+            tickfont: {size: 10},
+            dtick: 2 // Показывать каждый 2-й час, чтобы не мельчило
+        }
     }, {displayModeBar: false, responsive: true});
 </script>
 

@@ -6,9 +6,25 @@
     <!-- Контейнер для МОДАЛЬНОГО ОКНА (пустой по умолчанию) -->
     <div id="modal-container"></div>
 
-    <!-- Заголовок и Пагинация (без изменений) -->
+    <!-- Заголовок и Пагинация-->
     <div class="p-4 border-b border-gray-200 bg-gray-50 flex justify-between items-center shrink-0">
-        <!-- ... -->
+        <h2 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+            <span class="text-blue-600">#</span> {{ table_name }}
+        </h2>
+        
+        <div class="flex items-center gap-3">
+            <span class="text-xs text-gray-500 bg-white px-2 py-1 rounded border hidden sm:inline-block">Показано 100 записей</span>
+            
+            <!-- НОВАЯ КНОПКА: Добавить -->
+            <button 
+                hx-get="/admin/tables/create-form/{{ table_name }}"
+                hx-target="#modal-container"
+                hx-swap="innerHTML"
+                class="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition shadow-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                <span class="hidden sm:inline">Добавить</span>
+            </button>
+        </div>
     </div>
 
     <!-- Таблица -->
