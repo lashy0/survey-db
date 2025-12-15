@@ -123,117 +123,178 @@ async def submit_survey(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    # 1. Проверка опроса
-    survey = await db.get(Survey, survey_id)
-    if not survey or survey.status != SurveyStatus.active:
-        raise HTTPException(status_code=400, detail="Этот опрос нельзя пройти сейчас")
+    # 1. Загрузка данных опроса с вопросами и опциями
+    # Важно: используем eager loading для опций, чтобы валидировать ID
+    survey_query = (
+        select(Survey)
+        .where(Survey.survey_id == survey_id)
+        .options(
+            selectinload(Survey.questions).selectinload(Question.options)
+        )
+    )
+    survey = (await db.execute(survey_query)).scalar_one_or_none()
 
-    # 2. Получаем или создаем сессию (Response)
-    # Используем unique constraint (user_id, survey_id)
+    if not survey:
+        raise HTTPException(status_code=404, detail="Опрос не найден")
+    if survey.status != SurveyStatus.active:
+        raise HTTPException(status_code=400, detail="Опрос не активен")
+
+    form_data = await request.form()
+    
+    # --- ЭТАП 1: ВАЛИДАЦИЯ ---
+    # Мы собираем очищенные данные, чтобы потом их сохранить
+    # cleaned_data = { question_id: { 'type': ..., 'values': [...] } }
+    cleaned_data = {}
+
+    for question in survey.questions:
+        form_key = f"q_{question.question_id}"
+        
+        # Получаем сырые данные
+        if question.question_type == QuestionType.multiple_choice:
+            raw_values = form_data.getlist(form_key) # Список строк
+        else:
+            val = form_data.get(form_key)
+            raw_values = [val] if val else []
+
+        # Фильтруем пустые строки
+        raw_values = [v for v in raw_values if v is not None and str(v).strip() != ""]
+
+        # 1. Проверка на обязательность
+        if question.is_required and not raw_values:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Вопрос '{question.question_text}' обязателен для ответа"
+            )
+
+        # Если ответ пустой и необязательный — пропускаем валидацию значений
+        if not raw_values:
+            continue
+
+        # 2. Проверка валидности значений (защита от подделки ID)
+        valid_values = []
+        
+        if question.question_type in [QuestionType.single_choice, QuestionType.multiple_choice, QuestionType.rating]:
+            # Создаем множество валидных ID для этого вопроса
+            valid_option_ids = {str(opt.option_id) for opt in question.options}
+            
+            for val in raw_values:
+                if val not in valid_option_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Получен некорректный вариант ответа для вопроса '{question.question_text}'"
+                    )
+                valid_values.append(int(val))
+                
+        elif question.question_type == QuestionType.text_answer:
+            # Для текста просто сохраняем строку (можно добавить проверку на длину)
+            text_val = str(raw_values[0]).strip()
+            if len(text_val) > 5000: # Лимит на длину
+                 raise HTTPException(status_code=400, detail=f"Ответ на вопрос '{question.question_text}' слишком длинный")
+            valid_values.append(text_val)
+
+        cleaned_data[question.question_id] = {
+            "type": question.question_type,
+            "values": valid_values
+        }
+
+    # --- ЭТАП 2: СОХРАНЕНИЕ ---
+    
+    # Получаем или создаем сессию (Response)
     query = (
         select(SurveyResponse)
         .where(
             SurveyResponse.survey_id == survey_id,
             SurveyResponse.user_id == user.user_id
         )
-        .options(selectinload(SurveyResponse.answers)) # Подгружаем старые ответы для сравнения
+        .options(selectinload(SurveyResponse.answers))
     )
     response_obj = (await db.execute(query)).scalar_one_or_none()
-
+    
     if not response_obj:
         response_obj = SurveyResponse(
             survey_id=survey_id,
             user_id=user.user_id,
             started_at=datetime.now(timezone.utc),
             ip_address=request.client.host,
-            device_type="Web",
-            answers=[]
+            device_type="Web"
         )
         db.add(response_obj)
-        await db.flush() # Чтобы получить response_id
+        await db.flush() # Получаем ID
     
-    # 3. Обработка формы
-    form_data = await request.form()
-    
-    # Чтобы не делать N запросов, загрузим все вопросы опроса
-    questions_map = {
-        q.question_id: q 
-        for q in (await db.execute(select(Question).where(Question.survey_id == survey_id))).scalars().all()
-    }
+    # Обновляем время завершения
+    response_obj.completed_at = datetime.now(timezone.utc)
 
-    # Группируем ответы пользователя по вопросам из базы
-    # (потому что мы не хотим доверять keys из формы слепо)
+    # Применяем изменения к ответам
+    # Стратегия: идем по cleaned_data.
+    # Если вопрос мульти-выбор -> удаляем старые, пишем новые.
+    # Если одиночный/текст -> обновляем или создаем.
     
-    for q_id, question in questions_map.items():
-        form_key = f"q_{q_id}"
-        
-        # Получаем данные из формы (list для checkbox, str для остального)
-        if question.question_type == QuestionType.multiple_choice:
-            raw_values = form_data.getlist(form_key) # Список ID опций
-        else:
-            val = form_data.get(form_key)
-            raw_values = [val] if val else []
+    for q_id, data in cleaned_data.items():
+        q_type = data["type"]
+        values = data["values"] # list of int (option_ids) or list of str (text)
 
-        # Стратегия обновления
-        
-        if question.question_type == QuestionType.multiple_choice:
-            # Для множественного выбора: проще удалить старые и записать новые
-            # (так как сравнение списков "что добавить, что удалить" сложнее)
-            
-            # 1. Удаляем старые ответы на ЭТОТ вопрос
+        if q_type == QuestionType.multiple_choice:
+            # Удаляем старые
             await db.execute(
                 delete(UserAnswer).where(
                     UserAnswer.response_id == response_obj.response_id,
                     UserAnswer.question_id == q_id
                 )
             )
+            # Пишем новые
+            for val in values:
+                db.add(UserAnswer(
+                    response_id=response_obj.response_id,
+                    question_id=q_id,
+                    selected_option_id=val
+                ))
+        
+        else: # Single, Rating, Text
+            # Ищем существующий ответ в памяти (так как мы подгрузили .answers)
+            # или в БД, если объект свежий
+            existing_ans = None
+            if response_obj.answers:
+                for ans in response_obj.answers:
+                    if ans.question_id == q_id:
+                        existing_ans = ans
+                        break
             
-            # 2. Вставляем новые
-            for opt_id in raw_values:
-                if opt_id: # Проверка на пустоту
-                    db.add(UserAnswer(
-                        response_id=response_obj.response_id,
-                        question_id=q_id,
-                        selected_option_id=int(opt_id)
-                    ))
+            if not values:
+                # Пользователь стер ответ (если он необязательный)
+                if existing_ans:
+                    await db.delete(existing_ans)
+                continue
 
-        else:
-            # Для Single Choice / Text / Rating: ищем СУЩЕСТВУЮЩИЙ ответ и обновляем его
-            # (чтобы не растить id в таблице)
+            val = values[0]
             
-            current_answer_row = next(
-                (a for a in response_obj.answers if a.question_id == q_id), 
-                None
-            )
-
-            new_value = raw_values[0] if raw_values else None
-
-            if new_value:
-                if not current_answer_row:
-                    # Создаем новый
-                    current_answer_row = UserAnswer(
-                        response_id=response_obj.response_id,
-                        question_id=q_id
-                    )
-                    db.add(current_answer_row)
-                
-                # Обновляем поля
-                if question.question_type == QuestionType.text_answer:
-                    current_answer_row.text_answer = str(new_value)
-                    current_answer_row.selected_option_id = None
-                else:
-                    current_answer_row.selected_option_id = int(new_value)
-                    current_answer_row.text_answer = None
+            if not existing_ans:
+                existing_ans = UserAnswer(
+                    response_id=response_obj.response_id, 
+                    question_id=q_id
+                )
+                db.add(existing_ans)
+            
+            # Обновляем поля
+            if q_type == QuestionType.text_answer:
+                existing_ans.text_answer = val
+                existing_ans.selected_option_id = None
             else:
-                # Если пользователь стер ответ (например, текст), можно удалить строку
-                if current_answer_row:
-                    await db.delete(current_answer_row)
+                existing_ans.selected_option_id = val
+                existing_ans.text_answer = None
 
-    # 4. Финализация
-    response_obj.completed_at = datetime.now(timezone.utc)
+    # Обработка случаев, когда пользователь очистил ответы на необязательные вопросы,
+    # которых нет в cleaned_data (потому что form_data их не прислал)
+    # Находим вопросы, на которые были ответы раньше, но теперь нет
+    answered_q_ids = set(cleaned_data.keys())
+    if response_obj.answers:
+        for ans in response_obj.answers:
+            if ans.question_id not in answered_q_ids:
+                # Проверяем, действительно ли вопрос существует в этом опросе (на всякий случай)
+                # и удаляем ответ
+                await db.delete(ans)
+
     await db.commit()
-
-    # Редирект обратно на опрос с сообщением
+    
     return RedirectResponse(
         url=f"/surveys/{survey_id}?msg=saved", 
         status_code=303

@@ -263,6 +263,7 @@ async def get_table_data(
     table_name: str,
     page: int = 1,      # Добавили пагинацию
     limit: int = 100,
+    q: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
@@ -277,40 +278,56 @@ async def get_table_data(
     async with engine.connect() as conn:
         if not await conn.run_sync(check_table_exists):
             return HTMLResponse("Таблица не найдена")
-
-    # 1. Получаем колонки и PK
-    def get_table_info(connection):
+        
+    # 1. Получаем метаданные колонок
+    def get_table_meta(connection):
         inspector = inspect(connection)
         pk_constraint = inspector.get_pk_constraint(table_name)
         pk_columns = pk_constraint['constrained_columns']
-        columns = [col['name'] for col in inspector.get_columns(table_name)]
-        return columns, pk_columns
+        columns_data = inspector.get_columns(table_name)
+        return columns_data, pk_columns
 
     async with engine.connect() as conn:
-        columns, pk_columns = await conn.run_sync(get_table_info)
+        columns_data, pk_columns = await conn.run_sync(get_table_meta)
     
-    # Пока поддерживаем редактирование только таблиц с простым (одинарным) PK
+    columns = [c['name'] for c in columns_data]
     pk_col = pk_columns[0] if pk_columns else None
+    pk_col_idx = columns.index(pk_col) if pk_col and pk_col in columns else 0
 
-    pk_col_idx = 0
-    if pk_col and pk_col in columns:
-        pk_col_idx = columns.index(pk_col)
+    # 2. Логика ПОИСКА
+    where_clause = ""
+    params = {}
 
-    # 2. Получаем данные с пагинацией
+    if q and q.strip():
+        search_filters = []
+        params["search_q"] = f"%{q.strip()}%"
+        
+        for col in columns_data:
+            # Ищем по всем колонкам, приводя их к тексту.
+            # Это позволяет искать и по числам (ID), и по датам, и по тексту.
+            # "col_name"::text ILIKE :search_q
+            search_filters.append(f'"{col["name"]}"::text ILIKE :search_q')
+        
+        if search_filters:
+            where_clause = "WHERE " + " OR ".join(search_filters)
+
+    # 3. Выполняем запросы
     offset = (page - 1) * limit
+
     try:
-        # Считаем общее кол-во для пагинации
-        count_res = await db.execute(text(f'SELECT COUNT(*) FROM "{table_name}"'))
+        # Считаем общее кол-во (с учетом фильтра!)
+        count_query = text(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}')
+        count_res = await db.execute(count_query, params)
         total_rows = count_res.scalar()
 
-        # Выбираем данные
-        # Важно: сортируем по PK, чтобы порядок был стабильным
+        # Получаем данные
         order_clause = f'ORDER BY "{pk_col}"' if pk_col else ''
-        query = text(f'SELECT * FROM "{table_name}" {order_clause} LIMIT {limit} OFFSET {offset}')
-        result = await db.execute(query)
+        data_query = text(f'SELECT * FROM "{table_name}" {where_clause} {order_clause} LIMIT {limit} OFFSET {offset}')
+        
+        result = await db.execute(data_query, params)
         rows = result.all()
     except Exception as e:
-        return HTMLResponse(f"Ошибка: {e}")
+        return HTMLResponse(f"Ошибка выполнения запроса: {e}")
 
     # Считаем всего страниц
     total_pages = (total_rows + limit - 1) // limit
@@ -326,7 +343,8 @@ async def get_table_data(
             "pk_col_idx": pk_col_idx,
             "page": page,
             "total_pages": total_pages,
-            "limit": limit
+            "limit": limit,
+            "q": q if q else "" # Возвращаем строку поиска в шаблон
         }
     )
 
@@ -413,6 +431,9 @@ async def update_table_row_modal(
     
     for col, val in form_data.items():
         if col == pk_col: continue
+
+        if ('password' in col or 'hash' in col) and val:
+            val = get_password_hash(val)
         
         # Получаем тип колонки
         col_type = str(col_types.get(col, '')).upper()
@@ -513,6 +534,73 @@ async def delete_table_row(
         headers={"HX-Trigger": json.dumps({"showToast": "Запись удалена"})}
     )
 
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ (чтобы не дублировать код) ---
+async def _get_table_options(conn, table_name, columns_info):
+    """
+    Собирает варианты выбора (options) для Foreign Keys и Enums.
+    """
+    options_map = {}
+    
+    # 1. Inspect Foreign Keys
+    def get_fks(connection):
+        return inspect(connection).get_foreign_keys(table_name)
+    
+    fks = await conn.run_sync(get_fks)
+    
+    for fk in fks:
+        col_name = fk['constrained_columns'][0]
+        ref_table = fk['referred_table']
+        ref_col = fk['referred_columns'][0]
+        
+        # Определяем отображаемую колонку (name, title, etc)
+        def get_ref_cols(connection):
+            return inspect(connection).get_columns(ref_table)
+        
+        ref_cols_info = await conn.run_sync(get_ref_cols)
+        display_col = ref_col # Fallback
+        for c in ref_cols_info:
+            if c['name'] in ['name', 'title', 'full_name', 'email', 'label', 'option_text']:
+                display_col = c['name']
+                break
+        
+        try:
+            # Загружаем данные (ID, Name)
+            query = text(f'SELECT "{ref_col}", "{display_col}" FROM "{ref_table}" LIMIT 100')
+            res = await conn.execute(query)
+            options_map[col_name] = res.all()
+        except Exception as e:
+            print(f"Error loading FK options for {col_name}: {e}")
+
+    # 2. Обработка ENUM (Hardcoded Fix + Auto Detection)
+    for col in columns_info:
+        col_name = col['name']
+        col_type_str = str(col['type']).upper()
+        
+        # --- РУЧНОЕ ЗАДАНИЕ ЗНАЧЕНИЙ ДЛЯ ВАШЕГО ПРОЕКТА ---
+        # PostgreSQL через SQLAlchemy не всегда отдает значения ENUM, проще задать их здесь
+        if col_name == 'role':
+            options_map[col_name] = ['user', 'creator', 'admin']
+            continue
+        if col_name == 'status':
+            options_map[col_name] = ['draft', 'active', 'completed', 'archived']
+            continue
+        if col_name == 'question_type':
+            options_map[col_name] = ['single_choice', 'multiple_choice', 'text_answer', 'rating']
+            continue
+        # --------------------------------------------------
+
+        # Попытка авто-парсинга (для MySQL или простых Enum)
+        if "ENUM" in col_type_str and "(" in col_type_str:
+            try:
+                content = col_type_str.split("(")[1].split(")")[0]
+                variants = [v.strip().strip("'") for v in content.split(",")]
+                options_map[col_name] = variants
+            except:
+                pass
+
+    return options_map
+
+
 @router.get("/tables/create-form/{table_name}", response_class=HTMLResponse)
 async def get_create_form(
     request: Request,
@@ -520,64 +608,20 @@ async def get_create_form(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Возвращает форму создания записи."""
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
-    
-    options_map = {} 
 
-    # Интроспекция: получаем список колонок и их типы
     def get_schema_info(connection):
         inspector = inspect(connection)
         pk_constraint = inspector.get_pk_constraint(table_name)
         pk_col = pk_constraint['constrained_columns'][0] if pk_constraint['constrained_columns'] else None
         columns = inspector.get_columns(table_name)
-        fks = inspector.get_foreign_keys(table_name)
-        return columns, pk_col, fks
+        return columns, pk_col
 
     async with engine.connect() as conn:
-        columns, pk_col, fks = await conn.run_sync(get_schema_info)
-
-        for fk in fks:
-            col_name = fk['constrained_columns'][0]      # например, country_id
-            ref_table = fk['referred_table']             # например, countries
-            ref_col = fk['referred_columns'][0]          # например, country_id
-            
-            # Пытаемся угадать, какую колонку показывать как текст (name, title, email или первую текстовую)
-            # Для этого нужно получить колонки той таблицы
-            def get_ref_columns(conn):
-                return inspect(conn).get_columns(ref_table)
-            
-            ref_table_cols = await conn.run_sync(get_ref_columns)
-            display_col = ref_col # По умолчанию ID
-            
-            # Ищем что-то похожее на имя
-            for c in ref_table_cols:
-                if c['name'] in ['name', 'title', 'full_name', 'email', 'label']:
-                    display_col = c['name']
-                    break
-            
-            # Делаем запрос к справочнику (ограничим 100 записями)
-            query = text(f'SELECT "{ref_col}", "{display_col}" FROM "{ref_table}" LIMIT 100')
-            res = await db.execute(query)
-            # Сохраняем список кортежей [(1, 'Россия'), ...]
-            options_map[col_name] = res.all()
-        
-        for col in columns:
-            # Если тип колонки ENUM (SQLAlchemy object)
-            if "ENUM" in str(col['type']).upper():
-                # Попытаемся достать варианты. В str(col['type']) обычно что-то вроде ENUM('user','admin')
-                # Это грязный хак, но для универсальной админки работает
-                try:
-                    raw_type = str(col['type'])
-                    if "(" in raw_type and ")" in raw_type:
-                        # Вырезаем всё внутри скобок и кавычек
-                        content = raw_type.split("(")[1].split(")")[0]
-                        # 'user', 'admin' -> ['user', 'admin']
-                        variants = [v.strip().strip("'") for v in content.split(",")]
-                        options_map[col['name']] = variants
-                except:
-                    pass
+        columns, pk_col = await conn.run_sync(get_schema_info)
+        # Вызываем нашу новую универсальную функцию
+        options_map = await _get_table_options(conn, table_name, columns)
 
     return templates.TemplateResponse(
         "admin/partials/create_modal.html",
@@ -656,4 +700,51 @@ async def create_table_row(
     return HTMLResponse(
         '<div id="modal-container" hx-swap-oob="true"></div>', 
         headers={"HX-Trigger": json.dumps({"tableUpdated": True, "showToast": "Запись создана"})}
+    )
+
+@router.get("/tables/edit-form/{table_name}/{pk_val}", response_class=HTMLResponse)
+async def get_edit_form(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    def get_info(connection):
+        inspector = inspect(connection)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_columns = pk_constraint['constrained_columns']
+        columns = inspector.get_columns(table_name)
+        return columns, pk_columns
+
+    async with engine.connect() as conn:
+        columns_info, pk_columns = await conn.run_sync(get_info)
+        # Вызываем ту же функцию, чтобы логика была одинаковой везде!
+        options_map = await _get_table_options(conn, table_name, columns_info)
+
+    pk_col = pk_columns[0] if pk_columns else None
+    
+    # Получаем саму запись
+    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
+    query = text(f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = :pk')
+    res = await db.execute(query, {"pk": pk_val_typed})
+    row = res.mappings().one_or_none()
+
+    if not row:
+        return HTMLResponse("Запись не найдена")
+
+    return templates.TemplateResponse(
+        "admin/partials/edit_modal.html",
+        {
+            "request": request,
+            "table_name": table_name,
+            "row": row,
+            "columns": columns_info,
+            "pk_col": pk_col,
+            "pk_val": pk_val,
+            "options_map": options_map
+        }
     )

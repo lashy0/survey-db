@@ -1,15 +1,11 @@
 <div class="fixed inset-0 z-[100]" aria-labelledby="modal-title" role="dialog" aria-modal="true">
     <div class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity backdrop-blur-sm" 
          onclick="document.getElementById('modal-container').innerHTML = ''"></div>
-
     <div class="fixed inset-0 z-10 overflow-y-auto">
         <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
             <div class="relative transform overflow-hidden rounded-xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-2xl border border-gray-100">
-                
                 <form hx-post="/admin/tables/create-row/{{ table_name }}" hx-target="#modal-error-block">
-                    <!-- Передаем имя PK, чтобы знать, какое поле можно пропустить (если автоинкремент) -->
                     <input type="hidden" name="pk_col_name" value="{{ pk_col }}">
-
                     <div class="bg-white px-6 py-6 max-h-[80vh] overflow-y-auto custom-scrollbar">
                         <div class="flex justify-between items-center mb-6">
                             <h3 class="text-xl font-bold text-gray-900">Новая запись: {{ table_name }}</h3>
@@ -17,64 +13,56 @@
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                             </button>
                         </div>
-                        
                         <div id="modal-error-block"></div>
-
                         <div class="space-y-4">
                             {% for col in columns %}
                                 {% set col_name = col['name'] %}
                                 {% set col_type = col['type'] | string %}
-                                
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 mb-1">
                                         {{ col_name }}
                                         {% if col_name == pk_col %}<span class="text-gray-400 text-xs ml-1">(Auto)</span>{% endif %}
                                     </label>
-                                    
+
                                     {% if col_name in options_map %}
-                                        <!-- ЭТО ВЫПАДАЮЩИЙ СПИСОК (FK или ENUM) -->
-                                        <select name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none">
-                                            <option value="">NULL (Не выбрано)</option>
-                                            
+                                        <!-- ВЫПАДАЮЩИЙ СПИСОК (Foreign Key или Enum) -->
+                                        <select name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                            {% if 'country' in col_name or 'user' in col_name %}
+                                                <option value="">Не выбрано</option>
+                                            {% endif %}
                                             {% for opt in options_map[col_name] %}
-                                                <!-- Проверяем, это список кортежей (FK) или список строк (Enum) -->
+                                                <!-- Проверяем, это FK (кортеж) или Enum (строка) -->
                                                 {% if opt is iterable and opt is not string %}
-                                                    <!-- FK: opt[0] это ID, opt[1] это Название -->
-                                                    <option value="{{ opt[0] }}">{{ opt[1] }} (ID: {{ opt[0] }})</option>
+                                                    <!-- FK: opt[0]=id, opt[1]=name -->
+                                                    <option value="{{ opt[0] }}">{{ opt[1] }}</option>
                                                 {% else %}
-                                                    <!-- Enum: opt это просто строка -->
+                                                    <!-- Enum: opt=string -->
                                                     <option value="{{ opt }}">{{ opt }}</option>
                                                 {% endif %}
                                             {% endfor %}
                                         </select>
 
-                                    {% elif 'password' in col_name %}
-                                        <!-- ЭТО ПАРОЛЬ -->
+                                    {% elif 'password' in col_name or 'hash' in col_name %}
+                                        <!-- ПАРОЛЬ (Скрытый ввод) -->
                                         <input type="password" name="{{ col_name }}" autocomplete="new-password"
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
-                                            placeholder="Введите пароль">
+                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                               placeholder="••••••••">
 
-                                    {% elif 'TEXT' in col_type or 'VARCHAR' in col_type and (not col['type'].length or col['type'].length > 100) %}
-                                        <!-- TEXTAREA (для описаний) -->
-                                        <textarea name="{{ col_name }}" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"></textarea>
-
+                                    {% elif 'TEXT' in col_type or ('VARCHAR' in col_type and (not col['type'].length or col['type'].length > 100)) %}
+                                        <textarea name="{{ col_name }}" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                                    
                                     {% elif 'DATE' in col_type %}
-                                        <!-- ДАТА -->
                                         <input type="date" name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-
+                                    
                                     {% elif 'BOOLEAN' in col_type %}
-                                        <!-- BOOLEAN -->
                                         <select name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white">
                                             <option value="NULL">NULL</option>
                                             <option value="true">True</option>
                                             <option value="false">False</option>
                                         </select>
-
+                                    
                                     {% else %}
-                                        <!-- ОБЫЧНЫЙ INPUT -->
-                                        <input type="text" name="{{ col_name }}" 
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
-                                            placeholder="{{ 'Auto' if col_name == pk_col else 'NULL' }}">
+                                        <input type="text" name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="{{ 'Auto' if col_name == pk_col else 'NULL' }}">
                                     {% endif %}
                                     
                                     <p class="text-xs text-gray-400 mt-1">{{ col_type }}</p>
@@ -82,7 +70,6 @@
                             {% endfor %}
                         </div>
                     </div>
-                    
                     <div class="bg-gray-50 px-6 py-4 flex flex-row-reverse gap-3 border-t border-gray-100">
                         <button type="submit" class="inline-flex w-full justify-center rounded-lg bg-green-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-green-500 sm:w-auto transition">
                             Создать
