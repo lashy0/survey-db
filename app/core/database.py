@@ -6,7 +6,7 @@ from app.core.config import settings
 # Initialize the asynchronous engine
 engine = create_async_engine(
     settings.database_url,
-    echo=True,  # Set to False in production to reduce log noise
+    echo=False,  # Set to False in production to reduce log noise
     pool_pre_ping=True
 )
 

@@ -20,7 +20,6 @@ async def _get_table_options(conn, table_name, columns_info):
     Собирает варианты выбора (options) для Foreign Keys и Enums.
     """
     options_map = {}
-    print(f"--- [DEBUG] Loading options for table: {table_name} ---")
 
     # 1. Заполняем хардкод (Гарантированные значения)
     for col in columns_info:
