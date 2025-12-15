@@ -14,6 +14,67 @@ from app.core.security import get_password_hash
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="app/templates")
 
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+async def _get_table_options(conn, table_name, columns_info):
+    """
+    Собирает варианты выбора (options) для Foreign Keys и Enums.
+    """
+    options_map = {}
+    print(f"--- [DEBUG] Loading options for table: {table_name} ---")
+
+    # 1. Заполняем хардкод (Гарантированные значения)
+    for col in columns_info:
+        col_name = col['name']
+        col_type_str = str(col['type']).upper()
+        
+        if col_name == 'role':
+            options_map[col_name] = ['user', 'creator', 'admin']
+        elif col_name == 'status':
+            options_map[col_name] = ['draft', 'active', 'completed', 'archived']
+        elif col_name == 'question_type':
+            options_map[col_name] = ['single_choice', 'multiple_choice', 'text_answer', 'rating']
+        elif "ENUM" in col_type_str and "(" in col_type_str and col_name not in options_map:
+            try:
+                content = col_type_str.split("(")[1].split(")")[0]
+                variants = [v.strip().strip("'") for v in content.split(",")]
+                options_map[col_name] = variants
+            except:
+                pass
+
+    # 2. Ищем Foreign Keys (Связи)
+    def get_fks(connection):
+        return inspect(connection).get_foreign_keys(table_name)
+    
+    try:
+        fks = await conn.run_sync(get_fks)
+        for fk in fks:
+            col_name = fk['constrained_columns'][0]
+            ref_table = fk['referred_table']
+            ref_col = fk['referred_columns'][0]
+            
+            def get_ref_cols(connection):
+                return inspect(connection).get_columns(ref_table)
+            
+            try:
+                ref_cols_info = await conn.run_sync(get_ref_cols)
+                display_col = ref_col 
+                for c in ref_cols_info:
+                    if c['name'] in ['name', 'title', 'full_name', 'email', 'label', 'option_text']:
+                        display_col = c['name']
+                        break
+                
+                query = text(f'SELECT "{ref_col}", "{display_col}" FROM "{ref_table}" LIMIT 100')
+                res = await conn.execute(query)
+                options_map[col_name] = res.all()
+            except Exception as e:
+                print(f"Error checking FK {col_name}: {e}")
+
+    except Exception as e:
+        print(f"Error getting FKs: {e}")
+
+    return options_map
+
+
 @router.get("/analytics", response_class=HTMLResponse)
 async def analytics_dashboard(
     request: Request,
@@ -26,32 +87,24 @@ async def analytics_dashboard(
             survey_id = int(survey_id)
         except ValueError:
             survey_id = None
-    
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
-
-    # --- 0. ЗАГРУЗКА СПИСКА ОПРОСОВ (для фильтра) ---
+    
     all_surveys = (await db.execute(select(Survey).order_by(Survey.title))).scalars().all()
-
-    # --- KPI и ГРАФИКИ (Оставляем как есть) ---
+    
     total_users = await db.scalar(select(func.count(User.user_id))) or 0
     total_surveys = await db.scalar(select(func.count(Survey.survey_id))) or 0
     total_responses = await db.scalar(select(func.count(SurveyResponse.response_id))) or 0
     
     cnt_users = total_users
-    # Используем метод .distinct() у колонки - это самый надежный способ в ORM
     cnt_started = await db.scalar(select(func.count(SurveyResponse.user_id.distinct()))) or 0
-    
-    cnt_completed = await db.scalar(
-        select(func.count(SurveyResponse.user_id.distinct()))
-        .where(SurveyResponse.completed_at.is_not(None))
-    ) or 0
+    cnt_completed = await db.scalar(select(func.count(SurveyResponse.user_id.distinct())).where(SurveyResponse.completed_at.is_not(None))) or 0
     
     funnel_data = {
         "labels": ["Регистрация", "Начали опрос", "Завершили опрос"],
         "counts": [int(cnt_users), int(cnt_started), int(cnt_completed)]
     }
-
+    
     activity_query = (
         select(
             func.date(SurveyResponse.started_at).label("date"),
@@ -65,7 +118,7 @@ async def analytics_dashboard(
         "dates": [str(row.date) for row in activity_res],
         "counts": [int(row.cnt) for row in activity_res]
     }
-
+    
     tags_query = (
         select(Tag.name, func.count(SurveyResponse.response_id).label("popularity"))
         .select_from(SurveyResponse)
@@ -82,8 +135,7 @@ async def analytics_dashboard(
         "labels": [str(row.name) for row in tags_res],
         "counts": [int(row.popularity) for row in tags_res]
     }
-
-    # --- 4. ANOMALIES (С ФИЛЬТРАЦИЕЙ) ---
+    
     stats_cte = (
         select(
             SurveyResponse.survey_id,
@@ -94,7 +146,6 @@ async def analytics_dashboard(
         .group_by(SurveyResponse.survey_id)
         .cte("survey_stats")
     )
-
     anomalies_query = (
         select(
             User.full_name,
@@ -111,18 +162,11 @@ async def analytics_dashboard(
             extract('epoch', SurveyResponse.duration) < (stats_cte.c.avg_sec - 1.5 * func.coalesce(stats_cte.c.std_sec, 0))
         )
         .order_by("user_sec")
-        # Убрали limit(10), чтобы показать всех
     )
-    
-    # ЕСЛИ ВЫБРАН ОПРОС — ДОБАВЛЯЕМ WHERE
     if survey_id:
         anomalies_query = anomalies_query.where(Survey.survey_id == survey_id)
-    
     anomalies_res = (await db.execute(anomalies_query)).all()
-
-    # --- 5. HEATMAP (День недели x Час) ---
-    # 0 = Sunday, 1 = Monday in PostgreSQL (или 1-7 isodow)
-    # Лучше использовать isodow: 1=Monday, 7=Sunday
+    
     heatmap_query = (
         select(
             extract('isodow', SurveyResponse.started_at).label("dow"),
@@ -132,41 +176,32 @@ async def analytics_dashboard(
         .group_by("dow", "hour")
     )
     heatmap_res = (await db.execute(heatmap_query)).all()
-
     heatmap_z = [[0 for _ in range(24)] for _ in range(7)]
-    
     for row in heatmap_res:
-        d = int(row.dow) - 1 # 1..7 -> 0..6
-        h = int(row.hour)    # 0..23
+        d = int(row.dow) - 1
+        h = int(row.hour)
         if 0 <= d < 7 and 0 <= h < 24:
             heatmap_z[d][h] = row.cnt
-
     heatmap_data = {
         "z": heatmap_z,
         "x": [f"{h:02d}:00" for h in range(24)],
         "y": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     }
-
     return templates.TemplateResponse(
         name="admin/analytics.html",
         context={
             "request": request,
             "user": user,
-            "kpi": {
-                "users": total_users,
-                "surveys": total_surveys,
-                "responses": total_responses
-            },
+            "kpi": {"users": total_users, "surveys": total_surveys, "responses": total_responses},
             "funnel_data": funnel_data,
             "time_series_data": time_series_data,
             "tags_data": tags_data,
             "anomalies": anomalies_res,
             "heatmap_data": heatmap_data,
-            "all_surveys": all_surveys, # Передаем список опросов
-            "selected_survey_id": survey_id # Передаем текущий выбор
+            "all_surveys": all_surveys,
+            "selected_survey_id": survey_id
         }
     )
-
 
 @router.get("/analytics/anomalies", response_class=HTMLResponse)
 async def get_anomalies_partial(
@@ -175,17 +210,13 @@ async def get_anomalies_partial(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Возвращает только HTML-фрагмент таблицы аномалий."""
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
-
-    # Обработка survey_id (так же как выше)
     if survey_id == "": survey_id = None
     if survey_id is not None:
         try: survey_id = int(survey_id)
         except: survey_id = None
-
-    # Повторяем запрос аномалий (можно вынести в отдельную функцию, чтобы не дублировать)
+    
     stats_cte = (
         select(
             SurveyResponse.survey_id,
@@ -196,7 +227,6 @@ async def get_anomalies_partial(
         .group_by(SurveyResponse.survey_id)
         .cte("survey_stats")
     )
-
     anomalies_query = (
         select(
             User.full_name,
@@ -214,19 +244,14 @@ async def get_anomalies_partial(
         )
         .order_by("user_sec")
     )
-    
     if survey_id:
         anomalies_query = anomalies_query.where(Survey.survey_id == survey_id)
-    
     anomalies_res = (await db.execute(anomalies_query)).all()
-
-    # Возвращаем только фрагмент!
+    
     return templates.TemplateResponse(
         "admin/partials/anomalies_table.html",
         {"request": request, "anomalies": anomalies_res}
     )
-
-
 
 @router.get("/tables_view", response_class=HTMLResponse)
 async def view_tables_dashboard(
@@ -235,19 +260,12 @@ async def view_tables_dashboard(
 ):
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
-
-    # ИСПОЛЬЗУЕМ SQLALCHEMY INSPECT (через run_sync для асинхронного engine)
     def get_table_names(connection):
         inspector = inspect(connection)
         return inspector.get_table_names()
-
-    # Запускаем синхронную функцию в асинхронном контексте
     async with engine.connect() as conn:
         table_names = await conn.run_sync(get_table_names)
-    
-    # Сортируем для красоты
     table_names.sort()
-
     return templates.TemplateResponse(
         "admin/tables.html",
         {
@@ -261,7 +279,7 @@ async def view_tables_dashboard(
 async def get_table_data(
     request: Request,
     table_name: str,
-    page: int = 1,      # Добавили пагинацию
+    page: int = 1,
     limit: int = 100,
     q: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
@@ -270,67 +288,88 @@ async def get_table_data(
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
 
-    # Валидация имени таблицы (как и раньше)
     def check_table_exists(connection):
-        inspector = inspect(connection)
-        return inspector.has_table(table_name)
-    
+        return inspect(connection).has_table(table_name)
     async with engine.connect() as conn:
         if not await conn.run_sync(check_table_exists):
             return HTMLResponse("Таблица не найдена")
-        
-    # 1. Получаем метаданные колонок
-    def get_table_meta(connection):
+
+    def get_meta(connection):
         inspector = inspect(connection)
         pk_constraint = inspector.get_pk_constraint(table_name)
-        pk_columns = pk_constraint['constrained_columns']
+        pk_cols = pk_constraint['constrained_columns']
         columns_data = inspector.get_columns(table_name)
-        return columns_data, pk_columns
+        fks = inspector.get_foreign_keys(table_name)
+        return columns_data, pk_cols, fks
 
     async with engine.connect() as conn:
-        columns_data, pk_columns = await conn.run_sync(get_table_meta)
-    
+        columns_data, pk_cols, fks = await conn.run_sync(get_meta)
+
     columns = [c['name'] for c in columns_data]
-    pk_col = pk_columns[0] if pk_columns else None
+    pk_col = pk_cols[0] if pk_cols else None
     pk_col_idx = columns.index(pk_col) if pk_col and pk_col in columns else 0
 
-    # 2. Логика ПОИСКА
     where_clause = ""
     params = {}
-
     if q and q.strip():
-        search_filters = []
-        params["search_q"] = f"%{q.strip()}%"
-        
-        for col in columns_data:
-            # Ищем по всем колонкам, приводя их к тексту.
-            # Это позволяет искать и по числам (ID), и по датам, и по тексту.
-            # "col_name"::text ILIKE :search_q
-            search_filters.append(f'"{col["name"]}"::text ILIKE :search_q')
-        
+        search_filters = [f'"{col["name"]}"::text ILIKE :search_q' for col in columns_data]
         if search_filters:
             where_clause = "WHERE " + " OR ".join(search_filters)
+            params["search_q"] = f"%{q.strip()}%"
 
-    # 3. Выполняем запросы
     offset = (page - 1) * limit
-
+    order_col = pk_col if pk_col else columns[0]
+    
     try:
-        # Считаем общее кол-во (с учетом фильтра!)
-        count_query = text(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}')
-        count_res = await db.execute(count_query, params)
+        count_res = await db.execute(text(f'SELECT COUNT(*) FROM "{table_name}" {where_clause}'), params)
         total_rows = count_res.scalar()
 
-        # Получаем данные
-        order_clause = f'ORDER BY "{pk_col}"' if pk_col else ''
-        data_query = text(f'SELECT * FROM "{table_name}" {where_clause} {order_clause} LIMIT {limit} OFFSET {offset}')
-        
-        result = await db.execute(data_query, params)
+        query_text = f'SELECT * FROM "{table_name}" {where_clause} ORDER BY "{order_col}" LIMIT {limit} OFFSET {offset}'
+        result = await db.execute(text(query_text), params)
         rows = result.all()
     except Exception as e:
-        return HTMLResponse(f"Ошибка выполнения запроса: {e}")
+        return HTMLResponse(f"Ошибка SQL: {e}")
 
-    # Считаем всего страниц
     total_pages = (total_rows + limit - 1) // limit
+
+    resolved_data = {} 
+    if rows and fks:
+        async with engine.connect() as conn:
+            for fk in fks:
+                local_col = fk['constrained_columns'][0]
+                remote_table = fk['referred_table']
+                remote_col = fk['referred_columns'][0]
+                
+                ids_to_fetch = set()
+                col_idx = columns.index(local_col)
+                
+                for row in rows:
+                    val = row[col_idx]
+                    if val is not None:
+                        ids_to_fetch.add(val)
+                
+                if not ids_to_fetch:
+                    continue
+
+                def get_ref_cols(c): return inspect(c).get_columns(remote_table)
+                ref_cols = await conn.run_sync(get_ref_cols)
+                
+                display_col = remote_col
+                for rc in ref_cols:
+                    if rc['name'] in ['full_name', 'title', 'name', 'label', 'email', 'question_text', 'option_text']:
+                        display_col = rc['name']
+                        break
+                
+                if ids_to_fetch:
+                    ids_list = list(ids_to_fetch)
+                    q_resolve = text(f'SELECT "{remote_col}", "{display_col}" FROM "{remote_table}" WHERE "{remote_col}" = ANY(:ids)')
+                    
+                    try:
+                        res = await conn.execute(q_resolve, {"ids": ids_list})
+                        mapping = {r[0]: str(r[1]) for r in res.all()}
+                        resolved_data[local_col] = mapping
+                    except Exception as e:
+                        print(f"Failed to resolve FK {local_col}: {e}")
 
     return templates.TemplateResponse(
         "admin/partials/table_content.html",
@@ -344,262 +383,10 @@ async def get_table_data(
             "page": page,
             "total_pages": total_pages,
             "limit": limit,
-            "q": q if q else "" # Возвращаем строку поиска в шаблон
+            "q": q if q else "",
+            "resolved_data": resolved_data
         }
     )
-
-@router.get("/tables/edit-form/{table_name}/{pk_val}", response_class=HTMLResponse)
-async def get_edit_form(
-    request: Request,
-    table_name: str,
-    pk_val: str,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user)
-):
-    """Возвращает форму редактирования для модального окна."""
-    if user.role != UserRole.admin:
-        raise HTTPException(status_code=403)
-
-    # 1. Интроспекция (нужны колонки, типы и PK)
-    def get_info(connection):
-        inspector = inspect(connection)
-        pk_constraint = inspector.get_pk_constraint(table_name)
-        pk_columns = pk_constraint['constrained_columns']
-        # Получаем детальную информацию о колонках (тип, nullable и т.д.)
-        columns = inspector.get_columns(table_name)
-        return columns, pk_columns
-
-    async with engine.connect() as conn:
-        columns_info, pk_columns = await conn.run_sync(get_info)
-    
-    pk_col = pk_columns[0] if pk_columns else None
-    if not pk_col:
-        return HTMLResponse("PK не найден")
-
-    # 2. Получаем данные строки
-    # Приводим pk_val к int если надо
-    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
-        
-    query = text(f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = :pk')
-    res = await db.execute(query, {"pk": pk_val_typed})
-    row = res.mappings().one_or_none() # Используем mappings() для доступа по имени
-    
-    if not row:
-        return HTMLResponse("Запись не найдена")
-
-    return templates.TemplateResponse(
-        "admin/partials/edit_modal.html",
-        {
-            "request": request,
-            "table_name": table_name,
-            "row": row,
-            "columns": columns_info, # Передаем метаданные колонок
-            "pk_col": pk_col,
-            "pk_val": pk_val
-        }
-    )
-
-@router.post("/tables/update-row/{table_name}/{pk_val}")
-async def update_table_row_modal(
-    request: Request,
-    table_name: str,
-    pk_val: str,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user)
-):
-    if user.role != UserRole.admin:
-        raise HTTPException(status_code=403)
-
-    form_data = await request.form()
-    
-    # 1. Получаем информацию о типах колонок
-    def get_table_meta(connection):
-        inspector = inspect(connection)
-        pk_constraint = inspector.get_pk_constraint(table_name)
-        pk_col = pk_constraint['constrained_columns'][0]
-        columns = inspector.get_columns(table_name)
-        # Создаем словарь: имя колонки -> тип (строкой или объектом)
-        col_types = {c['name']: c['type'] for c in columns}
-        return pk_col, col_types
-    
-    async with engine.connect() as conn:
-        pk_col, col_types = await conn.run_sync(get_table_meta)
-
-    # 2. Формируем запрос и конвертируем типы
-    set_clauses = []
-    params = {"pk": int(pk_val) if pk_val.isdigit() else pk_val}
-    
-    for col, val in form_data.items():
-        if col == pk_col: continue
-
-        if ('password' in col or 'hash' in col) and val:
-            val = get_password_hash(val)
-        
-        # Получаем тип колонки
-        col_type = str(col_types.get(col, '')).upper()
-        
-        set_clauses.append(f'"{col}" = :{col}')
-        
-        if val == "" or val == "NULL":
-            params[col] = None
-        else:
-            # --- КОНВЕРТАЦИЯ ТИПОВ ---
-            try:
-                if 'DATE' in col_type:
-                    # '1990-01-01' -> date object
-                    params[col] = datetime.strptime(val, '%Y-%m-%d').date()
-                elif 'TIMESTAMP' in col_type or 'DATETIME' in col_type:
-                    # Попытка парсинга с временем
-                    # HTML datetime-local дает формат 'YYYY-MM-DDTHH:MM'
-                    # Простой date input дает 'YYYY-MM-DD'
-                    if 'T' in val:
-                         params[col] = datetime.strptime(val, '%Y-%m-%dT%H:%M')
-                    else:
-                         params[col] = datetime.strptime(val, '%Y-%m-%d %H:%M:%S') # Или другой формат, который у вас в инпуте
-                elif 'INT' in col_type:
-                    params[col] = int(val)
-                elif 'BOOL' in col_type:
-                    params[col] = val.lower() == 'true'
-                else:
-                    # По умолчанию строка
-                    params[col] = val
-            except ValueError:
-                # Если не смогли распарсить, пробуем отправить как есть (Postgres может сам выкинуть ошибку)
-                # Или для дат это может быть формат с временем
-                if 'TIMESTAMP' in col_type:
-                     try:
-                         # Попробуем распарсить то, что пришло из БД ранее (если формат строки специфичный)
-                         params[col] = datetime.fromisoformat(val)
-                     except:
-                         params[col] = val
-                else:
-                    params[col] = val
-
-    if set_clauses:
-        query = text(f'UPDATE "{table_name}" SET {", ".join(set_clauses)} WHERE "{pk_col}" = :pk')
-        try:
-            await db.execute(query, params)
-            await db.commit()
-        except Exception as e:
-            return HTMLResponse(f"<div class='bg-red-100 text-red-700 p-4 rounded mb-4'>Ошибка БД: {e}</div>", status_code=200)
-
-    # Успех
-    return HTMLResponse(
-        '<div id="modal-container" hx-swap-oob="true"></div>', 
-        headers={"HX-Trigger": "tableUpdated"}
-    )
-
-@router.delete("/tables/row/delete/{table_name}/{pk_val}")
-async def delete_table_row(
-    request: Request,
-    table_name: str,
-    pk_val: str,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user)
-):
-    """Удаляет строку из таблицы."""
-    if user.role != UserRole.admin:
-        raise HTTPException(status_code=403)
-
-    # 1. Получаем PK колонку (для безопасности и where clause)
-    def get_pk(connection):
-        # Обработка ошибки, если PK нет
-        try:
-            return inspect(connection).get_pk_constraint(table_name)['constrained_columns'][0]
-        except (IndexError, KeyError):
-            return None
-    
-    async with engine.connect() as conn:
-        pk_col = await conn.run_sync(get_pk)
-
-    if not pk_col:
-        return HTMLResponse("Невозможно удалить: у таблицы нет Primary Key", status_code=400)
-
-    # 2. Удаляем
-    # Приводим тип, если это число
-    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
-    
-    try:
-        query = text(f'DELETE FROM "{table_name}" WHERE "{pk_col}" = :pk')
-        await db.execute(query, {"pk": pk_val_typed})
-        await db.commit()
-    except Exception as e:
-        # Можно вернуть тост с ошибкой
-        return HTMLResponse(status_code=200, headers={"HX-Trigger": json.dumps({"showToast": f"Ошибка удаления: {e}"})})
-
-    # 3. Возвращаем пустой ответ (строка исчезнет) + Тост успеха
-    return HTMLResponse(
-        content="", 
-        status_code=200,
-        headers={"HX-Trigger": json.dumps({"showToast": "Запись удалена"})}
-    )
-
-# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ (чтобы не дублировать код) ---
-async def _get_table_options(conn, table_name, columns_info):
-    """
-    Собирает варианты выбора (options) для Foreign Keys и Enums.
-    """
-    options_map = {}
-    
-    # 1. Inspect Foreign Keys
-    def get_fks(connection):
-        return inspect(connection).get_foreign_keys(table_name)
-    
-    fks = await conn.run_sync(get_fks)
-    
-    for fk in fks:
-        col_name = fk['constrained_columns'][0]
-        ref_table = fk['referred_table']
-        ref_col = fk['referred_columns'][0]
-        
-        # Определяем отображаемую колонку (name, title, etc)
-        def get_ref_cols(connection):
-            return inspect(connection).get_columns(ref_table)
-        
-        ref_cols_info = await conn.run_sync(get_ref_cols)
-        display_col = ref_col # Fallback
-        for c in ref_cols_info:
-            if c['name'] in ['name', 'title', 'full_name', 'email', 'label', 'option_text']:
-                display_col = c['name']
-                break
-        
-        try:
-            # Загружаем данные (ID, Name)
-            query = text(f'SELECT "{ref_col}", "{display_col}" FROM "{ref_table}" LIMIT 100')
-            res = await conn.execute(query)
-            options_map[col_name] = res.all()
-        except Exception as e:
-            print(f"Error loading FK options for {col_name}: {e}")
-
-    # 2. Обработка ENUM (Hardcoded Fix + Auto Detection)
-    for col in columns_info:
-        col_name = col['name']
-        col_type_str = str(col['type']).upper()
-        
-        # --- РУЧНОЕ ЗАДАНИЕ ЗНАЧЕНИЙ ДЛЯ ВАШЕГО ПРОЕКТА ---
-        # PostgreSQL через SQLAlchemy не всегда отдает значения ENUM, проще задать их здесь
-        if col_name == 'role':
-            options_map[col_name] = ['user', 'creator', 'admin']
-            continue
-        if col_name == 'status':
-            options_map[col_name] = ['draft', 'active', 'completed', 'archived']
-            continue
-        if col_name == 'question_type':
-            options_map[col_name] = ['single_choice', 'multiple_choice', 'text_answer', 'rating']
-            continue
-        # --------------------------------------------------
-
-        # Попытка авто-парсинга (для MySQL или простых Enum)
-        if "ENUM" in col_type_str and "(" in col_type_str:
-            try:
-                content = col_type_str.split("(")[1].split(")")[0]
-                variants = [v.strip().strip("'") for v in content.split(",")]
-                options_map[col_name] = variants
-            except:
-                pass
-
-    return options_map
-
 
 @router.get("/tables/create-form/{table_name}", response_class=HTMLResponse)
 async def get_create_form(
@@ -620,7 +407,6 @@ async def get_create_form(
 
     async with engine.connect() as conn:
         columns, pk_col = await conn.run_sync(get_schema_info)
-        # Вызываем нашу новую универсальную функцию
         options_map = await _get_table_options(conn, table_name, columns)
 
     return templates.TemplateResponse(
@@ -641,34 +427,27 @@ async def create_table_row(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Создает новую запись."""
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
-
+    
     form_data = await request.form()
     
-    # Интроспекция для типов данных
     def get_col_types(connection):
         return {c['name']: c['type'] for c in inspect(connection).get_columns(table_name)}
-    
     async with engine.connect() as conn:
         col_types = await conn.run_sync(get_col_types)
 
-    # Формируем INSERT
     cols = []
     params = {}
     
     for col, val in form_data.items():
-        # Пропускаем пустые PK (обычно они SERIAL/AUTO_INCREMENT)
         if val == "" and col == form_data.get("pk_col_name"):
             continue
-
-        if 'password' in col and val:
-            val = get_password_hash(val)
-            
-        cols.append(f'"{col}"')
         
-        # Конвертация типов (аналогично update)
+        if ('password' in col or 'hash' in col) and val:
+            val = get_password_hash(val)
+
+        cols.append(f'"{col}"')
         col_type = str(col_types.get(col, '')).upper()
         
         if val == "" or val == "NULL":
@@ -684,7 +463,7 @@ async def create_table_row(
                 else:
                     params[col] = val
              except:
-                 params[col] = val # Fallback
+                 params[col] = val
 
     if cols:
         placeholders = [f":{c.replace('\"', '')}" for c in cols]
@@ -696,7 +475,6 @@ async def create_table_row(
         except Exception as e:
             return HTMLResponse(f"<div class='bg-red-100 text-red-700 p-4 rounded mb-4'>Ошибка: {e}</div>", status_code=200)
 
-    # Успех: Закрываем модалку и обновляем таблицу
     return HTMLResponse(
         '<div id="modal-container" hx-swap-oob="true"></div>', 
         headers={"HX-Trigger": json.dumps({"tableUpdated": True, "showToast": "Запись создана"})}
@@ -713,6 +491,9 @@ async def get_edit_form(
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
 
+    # Инициализация переменной, чтобы она ВСЕГДА была определена
+    options_map = {} 
+
     def get_info(connection):
         inspector = inspect(connection)
         pk_constraint = inspector.get_pk_constraint(table_name)
@@ -722,12 +503,11 @@ async def get_edit_form(
 
     async with engine.connect() as conn:
         columns_info, pk_columns = await conn.run_sync(get_info)
-        # Вызываем ту же функцию, чтобы логика была одинаковой везде!
+        # Загружаем опции и сохраняем в переменную
         options_map = await _get_table_options(conn, table_name, columns_info)
 
     pk_col = pk_columns[0] if pk_columns else None
     
-    # Получаем саму запись
     pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
     query = text(f'SELECT * FROM "{table_name}" WHERE "{pk_col}" = :pk')
     res = await db.execute(query, {"pk": pk_val_typed})
@@ -745,6 +525,115 @@ async def get_edit_form(
             "columns": columns_info,
             "pk_col": pk_col,
             "pk_val": pk_val,
-            "options_map": options_map
+            "options_map": options_map # Передаем переменную в шаблон
         }
+    )
+
+@router.post("/tables/update-row/{table_name}/{pk_val}")
+async def update_table_row_modal(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+    
+    form_data = await request.form()
+    
+    def get_table_meta(connection):
+        inspector = inspect(connection)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        pk_col = pk_constraint['constrained_columns'][0]
+        columns = inspector.get_columns(table_name)
+        col_types = {c['name']: c['type'] for c in columns}
+        return pk_col, col_types
+
+    async with engine.connect() as conn:
+        pk_col, col_types = await conn.run_sync(get_table_meta)
+    
+    set_clauses = []
+    params = {"pk": int(pk_val) if pk_val.isdigit() else pk_val}
+    
+    for col, val in form_data.items():
+        if col == pk_col: continue
+        col_type = str(col_types.get(col, '')).upper()
+        set_clauses.append(f'"{col}" = :{col}')
+        
+        if val == "" or val == "NULL":
+            params[col] = None
+        else:
+            try:
+                if 'DATE' in col_type:
+                    params[col] = datetime.strptime(val, '%Y-%m-%d').date()
+                elif 'TIMESTAMP' in col_type or 'DATETIME' in col_type:
+                    if 'T' in val:
+                         params[col] = datetime.strptime(val, '%Y-%m-%dT%H:%M')
+                    else:
+                         params[col] = datetime.strptime(val, '%Y-%m-%d %H:%M:%S')
+                elif 'INT' in col_type:
+                    params[col] = int(val)
+                elif 'BOOL' in col_type:
+                    params[col] = val.lower() == 'true'
+                else:
+                    params[col] = val
+            except ValueError:
+                if 'TIMESTAMP' in col_type:
+                     try:
+                         params[col] = datetime.fromisoformat(val)
+                     except:
+                         params[col] = val
+                else:
+                    params[col] = val
+                    
+    if set_clauses:
+        query = text(f'UPDATE "{table_name}" SET {", ".join(set_clauses)} WHERE "{pk_col}" = :pk')
+        try:
+            await db.execute(query, params)
+            await db.commit()
+        except Exception as e:
+            return HTMLResponse(f"<div class='bg-red-100 text-red-700 p-4 rounded mb-4'>Ошибка БД: {e}</div>", status_code=200)
+
+    return HTMLResponse(
+        '<div id="modal-container" hx-swap-oob="true"></div>', 
+        headers={"HX-Trigger": "tableUpdated"}
+    )
+
+@router.delete("/tables/row/delete/{table_name}/{pk_val}")
+async def delete_table_row(
+    request: Request,
+    table_name: str,
+    pk_val: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403)
+
+    def get_pk(connection):
+        try:
+            return inspect(connection).get_pk_constraint(table_name)['constrained_columns'][0]
+        except (IndexError, KeyError):
+            return None
+
+    async with engine.connect() as conn:
+        pk_col = await conn.run_sync(get_pk)
+
+    if not pk_col:
+        return HTMLResponse("Невозможно удалить: у таблицы нет Primary Key", status_code=400)
+
+    pk_val_typed = int(pk_val) if pk_val.isdigit() else pk_val
+    
+    try:
+        query = text(f'DELETE FROM "{table_name}" WHERE "{pk_col}" = :pk')
+        await db.execute(query, {"pk": pk_val_typed})
+        await db.commit()
+    except Exception as e:
+        return HTMLResponse(status_code=200, headers={"HX-Trigger": json.dumps({"showToast": f"Ошибка удаления: {e}"})})
+
+    return HTMLResponse(
+        content="", 
+        status_code=200,
+        headers={"HX-Trigger": json.dumps({"showToast": "Запись удалена"})}
     )
