@@ -9,6 +9,7 @@ from sqlalchemy import select, func, desc, case, text, extract, inspect
 from app.core.database import get_db, engine
 from app.core.deps import get_current_user
 from app.models import User, Survey, SurveyResponse, Tag, survey_tags, UserRole
+from app.core.security import get_password_hash
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="app/templates")
@@ -522,19 +523,61 @@ async def get_create_form(
     """Возвращает форму создания записи."""
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403)
+    
+    options_map = {} 
 
     # Интроспекция: получаем список колонок и их типы
-    def get_columns_info(connection):
+    def get_schema_info(connection):
         inspector = inspect(connection)
-        # Получаем PK, чтобы (возможно) скрыть его из формы, если он auto-increment
         pk_constraint = inspector.get_pk_constraint(table_name)
         pk_col = pk_constraint['constrained_columns'][0] if pk_constraint['constrained_columns'] else None
-        
         columns = inspector.get_columns(table_name)
-        return columns, pk_col
+        fks = inspector.get_foreign_keys(table_name)
+        return columns, pk_col, fks
 
     async with engine.connect() as conn:
-        columns, pk_col = await conn.run_sync(get_columns_info)
+        columns, pk_col, fks = await conn.run_sync(get_schema_info)
+
+        for fk in fks:
+            col_name = fk['constrained_columns'][0]      # например, country_id
+            ref_table = fk['referred_table']             # например, countries
+            ref_col = fk['referred_columns'][0]          # например, country_id
+            
+            # Пытаемся угадать, какую колонку показывать как текст (name, title, email или первую текстовую)
+            # Для этого нужно получить колонки той таблицы
+            def get_ref_columns(conn):
+                return inspect(conn).get_columns(ref_table)
+            
+            ref_table_cols = await conn.run_sync(get_ref_columns)
+            display_col = ref_col # По умолчанию ID
+            
+            # Ищем что-то похожее на имя
+            for c in ref_table_cols:
+                if c['name'] in ['name', 'title', 'full_name', 'email', 'label']:
+                    display_col = c['name']
+                    break
+            
+            # Делаем запрос к справочнику (ограничим 100 записями)
+            query = text(f'SELECT "{ref_col}", "{display_col}" FROM "{ref_table}" LIMIT 100')
+            res = await db.execute(query)
+            # Сохраняем список кортежей [(1, 'Россия'), ...]
+            options_map[col_name] = res.all()
+        
+        for col in columns:
+            # Если тип колонки ENUM (SQLAlchemy object)
+            if "ENUM" in str(col['type']).upper():
+                # Попытаемся достать варианты. В str(col['type']) обычно что-то вроде ENUM('user','admin')
+                # Это грязный хак, но для универсальной админки работает
+                try:
+                    raw_type = str(col['type'])
+                    if "(" in raw_type and ")" in raw_type:
+                        # Вырезаем всё внутри скобок и кавычек
+                        content = raw_type.split("(")[1].split(")")[0]
+                        # 'user', 'admin' -> ['user', 'admin']
+                        variants = [v.strip().strip("'") for v in content.split(",")]
+                        options_map[col['name']] = variants
+                except:
+                    pass
 
     return templates.TemplateResponse(
         "admin/partials/create_modal.html",
@@ -542,7 +585,8 @@ async def get_create_form(
             "request": request,
             "table_name": table_name,
             "columns": columns,
-            "pk_col": pk_col
+            "pk_col": pk_col,
+            "options_map": options_map
         }
     )
 
@@ -574,6 +618,9 @@ async def create_table_row(
         # Пропускаем пустые PK (обычно они SERIAL/AUTO_INCREMENT)
         if val == "" and col == form_data.get("pk_col_name"):
             continue
+
+        if 'password' in col and val:
+            val = get_password_hash(val)
             
         cols.append(f'"{col}"')
         

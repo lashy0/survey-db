@@ -9,6 +9,7 @@ from app.core.deps import get_current_user
 from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash
 from app.models import User, Survey, SurveyResponse, Country
+from app.schemas import UserProfileUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 templates = Jinja2Templates(directory="app/templates")
@@ -114,34 +115,24 @@ async def change_password(
 @router.post("/update")
 async def update_profile(
     request: Request,
-    full_name: str = Form(...),
-    city: str = Form(None),
-    birth_date: str = Form(None), # Получаем как строку YYYY-MM-DD
-    country_id: int = Form(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Обновление данных профиля."""
-    user.full_name = full_name
-    user.city = city
+    form_data = await request.form()
     
-    # Обработка страны
-    if country_id and country_id > 0:
-        user.country_id = country_id
-    else:
-        user.country_id = None
+    try:
+        # Валидация и парсинг одной строкой
+        profile_data = UserProfileUpdate(**form_data)
+    except Exception as e:
+        # Вернуть пользователя назад с ошибкой
+        return RedirectResponse(url="/users/me?error=invalid_data", status_code=303)
 
-    # Обработка даты
-    if birth_date:
-        try:
-            from datetime import datetime
-            user.birth_date = datetime.strptime(birth_date, "%Y-%m-%d").date()
-        except ValueError:
-            pass # Игнорируем некорректную дату
-    else:
-        user.birth_date = None
-        
+    # Обновление полей (чисто и красиво)
+    user.full_name = profile_data.full_name
+    user.city = profile_data.city
+    user.country_id = profile_data.country_id
+    user.birth_date = profile_data.birth_date # Это уже date объект!
+    
     db.add(user)
     await db.commit()
-    
     return RedirectResponse(url="/users/me?msg=profile_updated", status_code=303)

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.routers import general, admin, auth, users, surveys
 from app.core.middleware import refresh_token_middleware
+from app.core.exceptions import not_found_handler, forbidden_handler, server_error_handler, unauthorized_handler
 
 def create_app() -> FastAPI:
     """
@@ -21,6 +22,11 @@ def create_app() -> FastAPI:
 
     # Middleware
     app_instance.middleware("http")(refresh_token_middleware)
+
+    app_instance.add_exception_handler(404, not_found_handler)
+    app_instance.add_exception_handler(403, forbidden_handler)
+    app_instance.add_exception_handler(401, unauthorized_handler)
+    app_instance.add_exception_handler(500, server_error_handler)
 
     # Include routers
     app_instance.include_router(admin.router)

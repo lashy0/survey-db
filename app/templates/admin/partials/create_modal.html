@@ -31,18 +31,50 @@
                                         {% if col_name == pk_col %}<span class="text-gray-400 text-xs ml-1">(Auto)</span>{% endif %}
                                     </label>
                                     
-                                    {% if 'TEXT' in col_type or 'VARCHAR' in col_type and (not col['type'].length or col['type'].length > 100) %}
-                                        <textarea name="{{ col_name }}" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                                    {% if col_name in options_map %}
+                                        <!-- ЭТО ВЫПАДАЮЩИЙ СПИСОК (FK или ENUM) -->
+                                        <select name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                            <option value="">NULL (Не выбрано)</option>
+                                            
+                                            {% for opt in options_map[col_name] %}
+                                                <!-- Проверяем, это список кортежей (FK) или список строк (Enum) -->
+                                                {% if opt is iterable and opt is not string %}
+                                                    <!-- FK: opt[0] это ID, opt[1] это Название -->
+                                                    <option value="{{ opt[0] }}">{{ opt[1] }} (ID: {{ opt[0] }})</option>
+                                                {% else %}
+                                                    <!-- Enum: opt это просто строка -->
+                                                    <option value="{{ opt }}">{{ opt }}</option>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </select>
+
+                                    {% elif 'password' in col_name %}
+                                        <!-- ЭТО ПАРОЛЬ -->
+                                        <input type="password" name="{{ col_name }}" autocomplete="new-password"
+                                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
+                                            placeholder="Введите пароль">
+
+                                    {% elif 'TEXT' in col_type or 'VARCHAR' in col_type and (not col['type'].length or col['type'].length > 100) %}
+                                        <!-- TEXTAREA (для описаний) -->
+                                        <textarea name="{{ col_name }}" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"></textarea>
+
                                     {% elif 'DATE' in col_type %}
+                                        <!-- ДАТА -->
                                         <input type="date" name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+
                                     {% elif 'BOOLEAN' in col_type %}
+                                        <!-- BOOLEAN -->
                                         <select name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white">
                                             <option value="NULL">NULL</option>
                                             <option value="true">True</option>
                                             <option value="false">False</option>
                                         </select>
+
                                     {% else %}
-                                        <input type="text" name="{{ col_name }}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="{{ 'Auto' if col_name == pk_col else 'NULL' }}">
+                                        <!-- ОБЫЧНЫЙ INPUT -->
+                                        <input type="text" name="{{ col_name }}" 
+                                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" 
+                                            placeholder="{{ 'Auto' if col_name == pk_col else 'NULL' }}">
                                     {% endif %}
                                     
                                     <p class="text-xs text-gray-400 mt-1">{{ col_type }}</p>

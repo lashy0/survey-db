@@ -11,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models import User, Survey, Question, Option, Tag, SurveyStatus, QuestionType, UserRole, SurveyResponse
+from app.schemas import SurveyCreateForm
+from app.core.utils import parse_form_data
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
 templates = Jinja2Templates(directory="app/templates")
@@ -50,117 +52,71 @@ async def get_option_partial(request: Request, q_index: int, o_index: int):
 @router.post("/create")
 async def create_survey(
     request: Request,
-    title: str = Form(...),
-    description: str = Form(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    form_data = await request.form()
-    
-    # 1. Создаем Опрос
+    # 1. Парсинг и Валидация через Pydantic
+    try:
+        raw_data = await parse_form_data(request)
+        survey_data = SurveyCreateForm(**raw_data)
+    except Exception as e:
+        # Если валидация не прошла, можно вернуть ошибку или отрендерить форму с ошибками
+        raise HTTPException(status_code=400, detail=f"Ошибка валидации данных: {e}")
+
+    # 2. Создаем Опрос (Survey)
     new_survey = Survey(
-        title=title,
-        description=description,
-        status=SurveyStatus.active, # Сразу активный для простоты
+        title=survey_data.title,
+        description=survey_data.description,
+        status=SurveyStatus.active,
         author_id=user.user_id,
         created_at=datetime.now(timezone.utc),
         start_date=datetime.now(timezone.utc),
         end_date=datetime.now(timezone.utc) + timedelta(days=30)
     )
-    
-    tag_names = form_data.getlist("tag_names")
-    
-    if tag_names:
+
+    # 3. Обработка Тегов
+    if survey_data.tag_names:
         final_tags = []
-        for name in tag_names:
+        for name in survey_data.tag_names:
             name = name.strip()
             if not name: continue
-            
-            # Ищем тег
             tag = (await db.execute(select(Tag).where(Tag.name == name))).scalar_one_or_none()
             if not tag:
-                # Создаем новый
                 tag = Tag(name=name)
                 db.add(tag)
-                # Нужно сделать flush, чтобы получить ID, если бы мы его использовали, 
-                # но для relationshio достаточно объекта
             final_tags.append(tag)
-        
         new_survey.tags = final_tags
 
     db.add(new_survey)
-    await db.flush() # Получаем ID опроса
+    await db.flush() # Чтобы получить new_survey.survey_id
 
-    # 2. Парсим вопросы из формы вручную
-    # Формат имен полей: 
-    #   questions[0][text]
-    #   questions[0][type]
-    #   questions[0][options][0]
-    
-    # Ищем индексы вопросов
-    q_indexes = set()
-    for key in form_data.keys():
-        if key.startswith("questions[") and "][text]" in key:
-            # Извлекаем индекс: questions[0][text] -> 0
-            idx = int(key.split("[")[1].split("]")[0])
-            q_indexes.add(idx)
-    
-    # Сортируем не по ID, а по скрытому полю position, которое заполнит JS
-    # Создаем список кортежей (position, index)
-    questions_to_create = []
-    
-    for idx in q_indexes:
-        # Получаем позицию из формы, или 0 по дефолту
-        pos_str = form_data.get(f"questions[{idx}][position]", "0")
-        pos = int(pos_str) if pos_str.isdigit() else 0
-        questions_to_create.append((pos, idx))
-    
-    # Сортируем по position
-    questions_to_create.sort(key=lambda x: x[0])
+    # 4. Создаем Вопросы (iterating over Pydantic models)
+    for q_item in survey_data.questions:
+        if not q_item.text: continue
 
-    for loop_pos, (_, idx) in enumerate(questions_to_create, start=1):
-        q_text = form_data.get(f"questions[{idx}][text]")
-        q_type = form_data.get(f"questions[{idx}][type]")
-
-        is_required_val = form_data.get(f"questions[{idx}][is_required]")
-        is_required = True if is_required_val == "on" else False
-        
-        if not q_text: continue
-
+        # Создаем вопрос
         question = Question(
             survey_id=new_survey.survey_id,
-            question_text=q_text,
-            question_type=QuestionType(q_type),
-            position=loop_pos,
-            is_required=is_required
+            question_text=q_item.text,
+            question_type=QuestionType(q_item.type),
+            position=q_item.position,
+            is_required=q_item.is_required
         )
         db.add(question)
-        await db.flush()
+        await db.flush() # Получаем ID вопроса
 
-        # Опции
-        if q_type in ["single_choice", "multiple_choice"]:
-            prefix = f"questions[{idx}][options]["
-            o_indexes = set()
-            for key in form_data.keys():
-                if key.startswith(prefix):
-                    o_idx = int(key.split(prefix)[1].split("]")[0])
-                    o_indexes.add(o_idx)
-            
-            for o_idx in sorted(list(o_indexes)):
-                opt_text = form_data.get(f"questions[{idx}][options][{o_idx}]")
-                if opt_text:
-                    db.add(Option(question_id=question.question_id, option_text=opt_text))
+        # Логика опций зависит от типа
+        if q_item.type in ["single_choice", "multiple_choice"]:
+            for opt_text in q_item.options:
+                db.add(Option(question_id=question.question_id, option_text=opt_text))
         
-        elif q_type == "rating":
-            # НОВАЯ ЛОГИКА: Генерируем цифры
-            scale = form_data.get(f"questions[{idx}][rating_scale]", "5")
-            max_val = int(scale) if scale.isdigit() else 5
-            
+        elif q_item.type == "rating":
+            # Генерируем 1..N
+            max_val = q_item.rating_scale if q_item.rating_scale else 5
             for i in range(1, max_val + 1):
                 db.add(Option(question_id=question.question_id, option_text=str(i)))
 
     await db.commit()
-    
     return RedirectResponse(url="/?msg=survey_created", status_code=303)
 
 @router.delete("/{survey_id}/delete")

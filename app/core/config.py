@@ -1,45 +1,34 @@
-import os
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import PostgresDsn, computed_field
 from sqlalchemy.engine import URL
 
 # Load environment variables from .env file
 load_dotenv()
 
-class Settings:
-    """
-    Application configuration settings.
+class Settings(BaseSettings):
+    # Pydantic сам считает переменные окружения, приведет типы и проверит их наличие
+    DB_USER: str = "postgres"
+    DB_PASS: str = ""
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_NAME: str = "postgres"
     
-    Attributes:
-        DB_USER (str): Database username.
-        DB_PASS (str): Database password.
-        DB_HOST (str): Database hostname.
-        DB_PORT (int): Database port.
-        DB_NAME (str): Database name.
-    """
-    DB_USER: str = os.getenv("DB_USER", "postgres")
-    DB_PASS: str = os.getenv("DB_PASS", "")
-    DB_HOST: str = os.getenv("DB_HOST", "localhost")
-    DB_PORT: int = int(os.getenv("DB_PORT", 5432))
-    DB_NAME: str = os.getenv("DB_NAME", "postgres")
-
-    # Auth settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "super-secret-key-change-it-in-production")
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    @property
+    model_config = SettingsConfigDict(
+        env_file=".env", 
+        env_ignore_empty=True,
+        arbitrary_types_allowed=True 
+    )
+
+    @computed_field
     def database_url(self) -> URL:
-        """
-        Constructs the SQLAlchemy database URL object.
-
-        This method safely handles special characters in passwords and 
-        ensures SSL is enabled for cloud databases.
-
-        Returns:
-            URL: The constructed SQLAlchemy connection URL.
-        """
-        return URL.create(
+        # Создаем URL объект, который сам экранирует пароли
+        url_object = URL.create(
             drivername="postgresql+asyncpg",
             username=self.DB_USER,
             password=self.DB_PASS,
@@ -48,5 +37,7 @@ class Settings:
             database=self.DB_NAME,
             query={"ssl": "require"},  # Enforce SSL for production/cloud DBs
         )
+
+        return url_object
 
 settings = Settings()

@@ -12,10 +12,62 @@
             <span class="text-blue-600">#</span> {{ table_name }}
         </h2>
         
-        <div class="flex items-center gap-3">
-            <span class="text-xs text-gray-500 bg-white px-2 py-1 rounded border hidden sm:inline-block">Показано 100 записей</span>
-            
-            <!-- НОВАЯ КНОПКА: Добавить -->
+        <div class="flex items-center gap-4">
+            <!-- БЛОК ПАГИНАЦИИ (ВЕРХНИЙ) -->
+            {% if total_pages > 1 %}
+            <div class="flex items-center h-8 bg-white rounded-md shadow-sm border border-gray-300 overflow-hidden">
+                
+                <!-- Кнопка НАЗАД -->
+                <button 
+                    {% if page > 1 %}
+                        hx-get="/admin/tables/data/{{ table_name }}?page={{ page - 1 }}"
+                        hx-target="#table-viewer"
+                    {% else %}
+                        disabled
+                    {% endif %}
+                    class="flex items-center justify-center h-full px-3 text-gray-500 hover:bg-gray-50 hover:text-blue-600 border-r border-gray-200 disabled:opacity-40 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors duration-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                
+                <!-- ФОРМА ВВОДА -->
+                <form hx-get="/admin/tables/data/{{ table_name }}" 
+                    hx-target="#table-viewer" 
+                    hx-trigger="submit"
+                    class="flex items-center h-full bg-gray-50 px-3 gap-2">
+                    
+                    <span class="text-xs font-medium text-gray-500 uppercase tracking-wide">Стр.</span>
+                    
+                    <!-- Инпут: убрали бордеры, сделали прозрачным фон для слияния, но добавили фокус -->
+                    <input type="number" 
+                        name="page" 
+                        value="{{ page }}" 
+                        min="1" 
+                        max="{{ total_pages }}"
+                        class="w-10 h-6 text-center text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all shadow-sm"
+                        title="Нажмите Enter"
+                    >
+                    
+                    <span class="text-xs font-medium text-gray-500">из {{ total_pages }}</span>
+                    
+                    <!-- Скрытая кнопка для работы Enter -->
+                    <button type="submit" class="hidden"></button>
+                </form>
+
+                <!-- Кнопка ВПЕРЕД -->
+                <button 
+                    {% if page < total_pages %}
+                        hx-get="/admin/tables/data/{{ table_name }}?page={{ page + 1 }}"
+                        hx-target="#table-viewer"
+                    {% else %}
+                        disabled
+                    {% endif %}
+                    class="flex items-center justify-center h-full px-3 text-gray-500 hover:bg-gray-50 hover:text-blue-600 border-l border-gray-200 disabled:opacity-40 disabled:hover:bg-white disabled:cursor-not-allowed transition-colors duration-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                </button>
+            </div>
+            {% endif %}
+
+            <!-- КНОПКА: Добавить -->
             <button 
                 hx-get="/admin/tables/create-form/{{ table_name }}"
                 hx-target="#modal-container"
@@ -92,3 +144,17 @@
         </table>
     </div>
 </div>
+
+<style>
+    /* Убираем стрелочки (spinners) в input type="number" */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    input[type=number] {
+        -moz-appearance: textfield; /* Firefox */
+    }
+</style>
+
+  
