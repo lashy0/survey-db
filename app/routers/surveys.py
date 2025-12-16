@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from pydantic import ValidationError
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -59,9 +60,17 @@ async def create_survey(
     try:
         raw_data = await parse_form_data(request)
         survey_data = SurveyCreateForm(**raw_data)
+    except ValidationError as e:
+        # Получаем первую понятную ошибку из списка
+        error_msg = e.errors()[0]['msg']
+        # Убираем "Value error, " если оно есть в начале (Pydantic добавляет это)
+        if "Value error, " in error_msg:
+            error_msg = error_msg.replace("Value error, ", "")
+        
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     except Exception as e:
-        # Если валидация не прошла, можно вернуть ошибку или отрендерить форму с ошибками
-        raise HTTPException(status_code=400, detail=f"Ошибка валидации данных: {e}")
+        raise HTTPException(status_code=400, detail=f"Ошибка данных: {e}")
 
     # 2. Создаем Опрос (Survey)
     new_survey = Survey(

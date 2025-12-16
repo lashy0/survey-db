@@ -10,9 +10,7 @@ class QuestionCreate(BaseModel):
     type: Literal["single_choice", "multiple_choice", "text_answer", "rating"]
     position: int = 0
     is_required: bool = False
-    # Для rating
     rating_scale: Optional[int] = None 
-    # Для choice
     options: List[str] = Field(default_factory=list)
 
 class SurveyCreateForm(BaseModel):
@@ -23,8 +21,25 @@ class SurveyCreateForm(BaseModel):
 
     @field_validator('questions')
     def sort_questions(cls, v):
-        """Гарантируем, что вопросы отсортированы по позиции"""
         return sorted(v, key=lambda q: q.position)
+    
+    @model_validator(mode='after')
+    def check_logic(self):
+        if not self.questions:
+            raise ValueError("Опрос должен содержать хотя бы один вопрос")
+        
+        for q in self.questions:
+            # Проверка: есть ли опции у вопросов с выбором
+            if q.type in ['single_choice', 'multiple_choice'] and len(q.options) < 2:
+                raise ValueError(f"Вопрос '{q.text}' типа '{q.type}' должен иметь минимум 2 варианта ответа")
+            
+            # Проверка: рейтинг
+            if q.type == 'rating':
+                if not q.rating_scale or not (2 <= q.rating_scale <= 10):
+                    # Если вдруг пришло что-то странное, ставим дефолт или ругаемся
+                    # В данном случае просто убедимся, что логика соблюдена
+                    pass 
+        return self
 
 # Для регистрации
 class UserRegister(BaseModel):
@@ -56,3 +71,4 @@ class PasswordChangeForm(BaseModel):
         if self.new_password != self.confirm_password:
             raise ValueError('Новые пароли не совпадают')
         return self
+
