@@ -16,6 +16,9 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
+    Index,
+    text
 )
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -91,6 +94,11 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("birth_date < CURRENT_DATE", name="check_birth_date"),
+        Index(
+            'idx_user_login', 
+            'email', 
+            postgresql_include=['password_hash', 'user_id', 'role']
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(primary_key=True)
@@ -151,6 +159,11 @@ class Survey(Base):
     __tablename__ = "surveys"
     __table_args__ = (
         CheckConstraint("end_date > start_date", name="check_dates"),
+        Index(
+            'idx_active_surveys', 
+            'created_at', 
+            postgresql_where=text("status = 'active'")
+        ),
     )
 
     survey_id: Mapped[int] = mapped_column(primary_key=True)
@@ -160,7 +173,8 @@ class Survey(Base):
         Enum(SurveyStatus, name="survey_status"), default=SurveyStatus.draft, nullable=False
     )
     author_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("users.user_id", ondelete="SET NULL")
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
@@ -197,7 +211,8 @@ class Question(Base):
 
     question_id: Mapped[int] = mapped_column(primary_key=True)
     survey_id: Mapped[int] = mapped_column(
-        ForeignKey("surveys.survey_id", ondelete="CASCADE")
+        ForeignKey("surveys.survey_id", ondelete="CASCADE"),
+        index=True
     )
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     question_type: Mapped[QuestionType] = mapped_column(
@@ -257,14 +272,17 @@ class SurveyResponse(Base):
     # Ensure unique attempt per user per survey
     __table_args__ = (
         CheckConstraint("completed_at >= started_at", name="check_completion_time"),
+        UniqueConstraint("survey_id", "user_id", name="unique_user_survey_attempt"),
     )
 
     response_id: Mapped[int] = mapped_column(primary_key=True)
     survey_id: Mapped[int] = mapped_column(
-        ForeignKey("surveys.survey_id", ondelete="CASCADE")
+        ForeignKey("surveys.survey_id", ondelete="CASCADE"),
+        index=True
     )
     user_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("users.user_id", ondelete="SET NULL")
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        index=True
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
@@ -305,6 +323,7 @@ class UserAnswer(Base):
             "selected_option_id IS NOT NULL OR text_answer IS NOT NULL", 
             name="check_answer_content"
         ),
+        Index('idx_answers_analytics', 'question_id', 'selected_option_id'),
     )
 
     answer_id: Mapped[int] = mapped_column(primary_key=True)
