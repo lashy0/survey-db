@@ -163,27 +163,34 @@
         const btnText = document.getElementById('btn-text');
         const btnSpinner = document.getElementById('btn-spinner');
         
-        if (!form || !submitBtn) return;
+        // Флаг: были ли изменения в форме?
+        let isDirty = false;
+        // Флаг: нажали ли кнопку отправки? (чтобы не пугать при сабмите)
+        let isSubmitting = false;
+
+        if (!form) return; // Если это режим "только чтение"
 
         // --- 1. Умная проверка изменений (Dirty Check) ---
         const inputs = form.querySelectorAll('.survey-input');
 
-        function checkDirty() {
-            let isDirty = false;
+        function checkChanges() {
+            let hasChanges  = false;
             
             inputs.forEach(input => {
                 if (input.type === 'checkbox' || input.type === 'radio') {
                     // Для чекбоксов и радио сравниваем checked с defaultChecked
                     if (input.checked !== input.defaultChecked) {
-                        isDirty = true;
+                        hasChanges  = true;
                     }
                 } else {
                     // Для текста сравниваем value с defaultValue
                     if (input.value !== input.defaultValue) {
-                        isDirty = true;
+                        hasChanges  = true;
                     }
                 }
             });
+
+            isDirty = hasChanges;
 
             // Обновляем состояние кнопки
             if (isDirty) {
@@ -198,8 +205,17 @@
         }
 
         // Слушаем события изменений на всех инпутах
-        form.addEventListener('input', checkDirty);
-        form.addEventListener('change', checkDirty);
+        form.addEventListener('input', checkChanges);
+        form.addEventListener('change', checkChanges);
+
+        // 2. Защита от закрытия вкладки (Native Browser Alert)
+        window.addEventListener('beforeunload', (e) => {
+            // Если есть несохраненные изменения И мы не нажимали "Сохранить"
+            if (isDirty && !isSubmitting) {
+                e.preventDefault();
+                e.returnValue = ''; // Стандарт для вызова диалога браузера
+            }
+        });
 
         // --- 2. Индикатор загрузки при отправке ---
         form.addEventListener('submit', () => {
