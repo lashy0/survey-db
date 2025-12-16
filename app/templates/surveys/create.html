@@ -16,6 +16,7 @@
     </div>
 
     <form action="/surveys/create" method="post" class="space-y-8" id="create-form">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
         
         <!-- Основная инфо -->
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-6">

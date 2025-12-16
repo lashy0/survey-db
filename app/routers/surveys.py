@@ -1,184 +1,82 @@
 import json
-from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, Form, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 from pydantic import ValidationError
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models import User, Survey, Question, Option, Tag, SurveyStatus, QuestionType, UserRole, SurveyResponse
+from app.models import User
 from app.schemas import SurveyCreateForm
 from app.core.utils import parse_form_data
+from app.services.survey import SurveyService
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
 templates = Jinja2Templates(directory="app/templates")
 
-@router.get("/create", response_class=HTMLResponse)
-async def create_survey_page(
-    request: Request,
-    user: User = Depends(get_current_user)
-):
-    """Страница создания опроса."""
-    
-    return templates.TemplateResponse(
-        "surveys/create.html", 
-        {"request": request, "user": user}
-    )
+# Зависимость сервиса
+def get_survey_service(db: AsyncSession = Depends(get_db)) -> SurveyService:
+    return SurveyService(db)
 
-# --- HTMX: Динамическое добавление полей ---
+@router.get("/create", response_class=HTMLResponse)
+async def create_survey_page(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("surveys/create.html", {"request": request, "user": user})
 
 @router.get("/partials/question", response_class=HTMLResponse)
 async def get_question_partial(request: Request, index: int):
-    """Возвращает HTML-блок нового вопроса."""
-    return templates.TemplateResponse(
-        "partials/question_form.html",
-        {"request": request, "index": index}
-    )
+    return templates.TemplateResponse("partials/question_form.html", {"request": request, "index": index})
 
 @router.get("/partials/option", response_class=HTMLResponse)
 async def get_option_partial(request: Request, q_index: int, o_index: int):
-    """Возвращает HTML-блок нового варианта ответа."""
-    return templates.TemplateResponse(
-        "partials/option_form.html",
-        {"request": request, "q_index": q_index, "o_index": o_index}
-    )
-
-# --- Сохранение опроса ---
+    return templates.TemplateResponse("partials/option_form.html", {"request": request, "q_index": q_index, "o_index": o_index})
 
 @router.post("/create")
 async def create_survey(
     request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user)
+    user: User = Depends(get_current_user),
+    service: SurveyService = Depends(get_survey_service)
 ):
-    # 1. Парсинг и Валидация через Pydantic
     try:
         raw_data = await parse_form_data(request)
         survey_data = SurveyCreateForm(**raw_data)
+        
+        # Вся логика создания ушла в сервис
+        await service.create_survey(user.user_id, survey_data)
+        
     except ValidationError as e:
-        # Получаем первую понятную ошибку из списка
-        error_msg = e.errors()[0]['msg']
-        # Убираем "Value error, " если оно есть в начале (Pydantic добавляет это)
-        if "Value error, " in error_msg:
-            error_msg = error_msg.replace("Value error, ", "")
-        
+        error_msg = e.errors()[0]['msg'].replace("Value error, ", "") if e.errors() else str(e)
         raise HTTPException(status_code=400, detail=error_msg)
-    
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Ошибка данных: {e}")
+        raise HTTPException(status_code=400, detail=f"Ошибка: {e}")
 
-    # 2. Создаем Опрос (Survey)
-    new_survey = Survey(
-        title=survey_data.title,
-        description=survey_data.description,
-        status=SurveyStatus.active,
-        author_id=user.user_id,
-        created_at=datetime.now(timezone.utc),
-        start_date=datetime.now(timezone.utc),
-        end_date=datetime.now(timezone.utc) + timedelta(days=30)
-    )
-
-    # 3. Обработка Тегов
-    if survey_data.tag_names:
-        final_tags = []
-        for name in survey_data.tag_names:
-            name = name.strip()
-            if not name: continue
-            tag = (await db.execute(select(Tag).where(Tag.name == name))).scalar_one_or_none()
-            if not tag:
-                tag = Tag(name=name)
-                db.add(tag)
-            final_tags.append(tag)
-        new_survey.tags = final_tags
-
-    db.add(new_survey)
-    await db.flush() # Чтобы получить new_survey.survey_id
-
-    # 4. Создаем Вопросы (iterating over Pydantic models)
-    for q_item in survey_data.questions:
-        if not q_item.text: continue
-
-        # Создаем вопрос
-        question = Question(
-            survey_id=new_survey.survey_id,
-            question_text=q_item.text,
-            question_type=QuestionType(q_item.type),
-            position=q_item.position,
-            is_required=q_item.is_required
-        )
-        db.add(question)
-        await db.flush() # Получаем ID вопроса
-
-        # Логика опций зависит от типа
-        if q_item.type in ["single_choice", "multiple_choice"]:
-            for opt_text in q_item.options:
-                db.add(Option(question_id=question.question_id, option_text=opt_text))
-        
-        elif q_item.type == "rating":
-            # Генерируем 1..N
-            max_val = q_item.rating_scale if q_item.rating_scale else 5
-            for i in range(1, max_val + 1):
-                db.add(Option(question_id=question.question_id, option_text=str(i)))
-
-    await db.commit()
     return RedirectResponse(url="/?msg=survey_created", status_code=303)
 
 @router.delete("/{survey_id}/delete")
 async def delete_survey(
     request: Request,
     survey_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user)
+    user: User = Depends(get_current_user),
+    service: SurveyService = Depends(get_survey_service)
 ):
-    """Удаление опроса и обновление статистики."""
-    # 1. Поиск и проверки
-    survey = await db.get(Survey, survey_id)
-    if not survey:
-        raise HTTPException(status_code=404, detail="Опрос не найден")
-    
-    if survey.author_id != user.user_id and user.role != UserRole.admin:
-        raise HTTPException(status_code=403, detail="Нет прав на удаление")
+    # Логика удаления
+    await service.delete_survey(user, survey_id)
 
-    # 2. Удаление
-    await db.delete(survey)
-    await db.commit()
-
-    # 3. ПОЛУЧЕНИЕ ОБНОВЛЕННЫХ ДАННЫХ
-    created_count = await db.scalar(
-        select(func.count()).select_from(Survey).where(Survey.author_id == user.user_id)
-    )
-
-    taken_query = (
-        select(SurveyResponse)
-        .where(SurveyResponse.user_id == user.user_id)
-        .options(selectinload(SurveyResponse.survey))
-        .order_by(SurveyResponse.started_at.desc())
-    )
-    taken_responses = (await db.execute(taken_query)).scalars().all()
+    # Получение обновленных данных для HTMX (также через сервис)
+    created_count, taken_responses = await service.get_user_stats(user.user_id)
     taken_count = len(taken_responses)
 
-    # 4. ФОРМИРОВАНИЕ ОТВЕТА (HTMX OOB)
-    # Пустая строка удалит саму строку опроса из таблицы (hx-target)
+    # Формирование HTML (Оставляем в роутере, так как это представление)
     content = ""
-
-    # OOB 1: Обновляем счетчик созданных (используем точные ID)
     content += f'<p id="created-count" hx-swap-oob="true" class="text-3xl font-bold text-green-600 mt-2">{created_count}</p>'
-
-    # OOB 2: Обновляем счетчик пройденных
     content += f'<p id="taken-count" hx-swap-oob="true" class="text-3xl font-bold text-blue-600 mt-2">{taken_count}</p>'
-
-    # OOB 3: Обновляем список истории
+    
     history_items = ""
     if taken_responses:
         for resp in taken_responses:
             status = "Завершен" if resp.completed_at else "Начат"
             status_color = "bg-green-100 text-green-700" if resp.completed_at else "bg-yellow-100 text-yellow-700"
-            
             history_items += f"""
             <a href="/surveys/{resp.survey.survey_id}" class="flex justify-between items-center p-3 rounded-lg hover:bg-blue-50 transition border border-transparent hover:border-blue-100 group/item">
                 <div>
@@ -188,16 +86,9 @@ async def delete_survey(
                 <span class="text-xs font-semibold px-2 py-1 rounded {status_color}">{status}</span>
             </a>
             """
-        # Важно: hx-swap-oob="true" заменит элемент с id="history-list" целиком
         history_html = f'<div id="history-list" hx-swap-oob="true"><div class="space-y-3">{history_items}</div></div>'
     else:
         history_html = '<div id="history-list" hx-swap-oob="true"><p class="text-gray-500 text-sm text-center py-4">Вы пока не проходили опросы.</p></div>'
     
     content += history_html
-
-    response = HTMLResponse(content=content, status_code=200)
-    
-    trigger_data = {"showToast": "Опрос успешно удален"}
-    response.headers["HX-Trigger"] = json.dumps(trigger_data)
-    
-    return response
+    return HTMLResponse(content=content, status_code=200, headers={"HX-Trigger": json.dumps({"showToast": "Опрос удален"})})

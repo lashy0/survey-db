@@ -48,6 +48,7 @@
 
     <!-- Форма -->
     <form id="survey-form" action="/surveys/{{ survey.survey_id }}/submit" method="post" class="space-y-6">
+        <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
         
         {% for question in survey.questions %}
         {% set user_answers_list = existing_answers.get(question.question_id, []) %}
@@ -208,6 +209,12 @@
         form.addEventListener('input', checkChanges);
         form.addEventListener('change', checkChanges);
 
+        if (submitBtn) {
+            submitBtn.addEventListener('click', () => {
+                isSubmitting = true;
+            });
+        }
+
         // 2. Защита от закрытия вкладки (Native Browser Alert)
         window.addEventListener('beforeunload', (e) => {
             // Если есть несохраненные изменения И мы не нажимали "Сохранить"
@@ -219,6 +226,7 @@
 
         // --- 2. Индикатор загрузки при отправке ---
         form.addEventListener('submit', () => {
+            isSubmitting = true; // Дублируем флаг для надежности
             // Блокируем кнопку, чтобы не нажать дважды
             submitBtn.disabled = true;
             submitBtn.classList.add('cursor-wait');

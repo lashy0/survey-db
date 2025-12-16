@@ -176,7 +176,7 @@
                             {% if cell is none %}
                                 <span class="text-gray-300 italic">NULL</span>
                             {% else %}
-                                {{ cell }}
+                                {{ cell | string | truncate(50) }}
                             {% endif %}
                         {% endif %}
 

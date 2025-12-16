@@ -16,6 +16,7 @@
         {% endif %}
 
         <form action="/register" method="post" class="space-y-5">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
             <!-- Имя -->
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Имя и Фамилия</label>

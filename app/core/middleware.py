@@ -1,6 +1,9 @@
-from fastapi import Request
+from fastapi import Request, Response
 import jwt
 from datetime import timedelta
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
+import secrets
 from app.core.config import settings
 from app.core.security import create_access_token
 
@@ -59,3 +62,54 @@ async def refresh_token_middleware(request: Request, call_next):
         )
 
     return response
+
+class CsrfMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # 1. Получаем токен из куки или генерируем новый
+        csrf_token = request.cookies.get("csrf_token")
+        if not csrf_token:
+            csrf_token = secrets.token_hex(32)
+            force_set_cookie = True
+        else:
+            force_set_cookie = False
+
+        # 2. Сохраняем в state, чтобы было доступно в шаблонах
+        request.state.csrf_token = csrf_token
+
+        # 3. Проверка для небезопасных методов
+        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+            # Пропускаем проверку для логина/регистрации если там нет кук (первый вход)
+            # Но лучше проверять всегда.
+            
+            submitted_token = None
+            
+            # А. Ищем в заголовках (для HTMX)
+            if "X-CSRF-Token" in request.headers:
+                submitted_token = request.headers["X-CSRF-Token"]
+            
+            # Б. Ищем в форме (для обычных HTML форм)
+            # Важно: content-type должен быть form-data или x-www-form-urlencoded
+            elif request.headers.get("content-type", "").startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
+                try:
+                    form = await request.form()
+                    submitted_token = form.get("csrf_token")
+                except Exception:
+                    pass
+
+            # Сравнение (безопасное по времени)
+            if not submitted_token or not secrets.compare_digest(submitted_token, csrf_token):
+                return Response("CSRF Token Mismatch", status_code=403)
+
+        response = await call_next(request)
+
+        # 4. Устанавливаем куку, если её не было
+        if force_set_cookie:
+            response.set_cookie(
+                key="csrf_token",
+                value=csrf_token,
+                httponly=False, # Должно быть False, чтобы JS мог прочитать (если нужно), но мы передаем через шаблон
+                samesite="lax",
+                secure=False # True для HTTPS
+            )
+
+        return response
