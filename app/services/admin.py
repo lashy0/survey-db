@@ -156,12 +156,43 @@ class AdminService:
         # 2. Построение запроса (Поиск)
         where_clause = ""
         params = {}
+        
         if q and q.strip():
-            # Поиск по всем колонкам через приведение к text
-            search_filters = [f'"{col["name"]}"::text ILIKE :search_q' for col in columns_data]
+            params["search_q"] = f"%{q.strip()}%"
+            search_filters = []
+
+            # А. Поиск по колонкам текущей таблицы
+            for col in columns_data:
+                search_filters.append(f'"{col["name"]}"::text ILIKE :search_q')
+            
+            # Б. Поиск по связанным таблицам (Foreign Keys) - НОВАЯ ЛОГИКА
+            # Мы генерируем подзапросы: 
+            # OR local_id IN (SELECT id FROM remote_table WHERE name ILIKE '%q%')
+            if fks:
+                async with engine.connect() as conn:
+                    for fk in fks:
+                        local_col = fk['constrained_columns'][0]
+                        remote_table = fk['referred_table']
+                        remote_pk = fk['referred_columns'][0]
+
+                        # Инспектируем удаленную таблицу, чтобы найти текстовое поле
+                        def _get_remote_cols(c): return inspect(c).get_columns(remote_table)
+                        remote_cols = await conn.run_sync(_get_remote_cols)
+                        
+                        display_col = None
+                        # Пытаемся найти колонку с названием
+                        for rc in remote_cols:
+                            if rc['name'] in ['name', 'title', 'full_name', 'email', 'label', 'question_text', 'option_text', 'text']:
+                                display_col = rc['name']
+                                break
+                        
+                        # Если нашли подходящую колонку в связанной таблице, добавляем поиск по ней
+                        if display_col:
+                            subquery = f'"{local_col}" IN (SELECT "{remote_pk}" FROM "{remote_table}" WHERE "{display_col}"::text ILIKE :search_q)'
+                            search_filters.append(subquery)
+
             if search_filters:
                 where_clause = "WHERE " + " OR ".join(search_filters)
-                params["search_q"] = f"%{q.strip()}%"
 
         # 3. Выполнение запросов (Count + Select)
         offset = (page - 1) * limit
@@ -176,7 +207,7 @@ class AdminService:
         except Exception as e:
             raise e
 
-        # 4. Резолвинг внешних ключей (Красивые имена вместо ID)
+        # 4. Резолвинг внешних ключей (Красивые имена вместо ID) - Оставляем как есть
         resolved_data = {}
         if rows and fks:
             async with engine.connect() as conn:
@@ -184,21 +215,18 @@ class AdminService:
                     local_col = fk['constrained_columns'][0]
                     col_idx = columns.index(local_col)
                     
-                    # Собираем ID, которые есть на странице
                     ids_to_fetch = {row[col_idx] for row in rows if row[col_idx] is not None}
                     
-                    if not ids_to_fetch:
-                        continue
+                    if not ids_to_fetch: continue
 
                     remote_table = fk['referred_table']
                     remote_col = fk['referred_columns'][0]
                     
-                    # Ищем текстовую колонку для отображения
                     def _get_ref_cols(c): return inspect(c).get_columns(remote_table)
                     ref_cols = await conn.run_sync(_get_ref_cols)
                     display_col = remote_col
                     for rc in ref_cols:
-                        if rc['name'] in ['full_name', 'title', 'name', 'label', 'email', 'question_text', 'option_text']:
+                        if rc['name'] in ['full_name', 'title', 'name', 'label', 'email', 'question_text', 'option_text', 'text']:
                             display_col = rc['name']
                             break
                     
@@ -208,7 +236,7 @@ class AdminService:
                         res = await conn.execute(q_resolve, {"ids": ids_list})
                         resolved_data[local_col] = {r[0]: str(r[1]) for r in res.all()}
                     except Exception:
-                        pass # Игнорируем ошибки резолвинга
+                        pass 
 
         return {
             "columns": columns,

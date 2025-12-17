@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 import jwt # PyJWT
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import secrets
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -66,3 +67,21 @@ async def get_optional_user(
         return await get_current_user(request, db)
     except HTTPException:
         return None
+
+
+async def check_csrf(request: Request):
+    # Проверяем только небезопасные методы
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        csrf_token = request.cookies.get("csrf_token")
+        # Получаем данные формы. 
+        # В зависимостях FastAPI и Starlette request.form() кэшируется, 
+        # поэтому здесь вызов безопасен, если он происходит в контексте роутера.
+        form = await request.form()
+        submitted_token = form.get("csrf_token")
+        
+        # Заголовок (для HTMX)
+        if not submitted_token:
+            submitted_token = request.headers.get("X-CSRF-Token")
+            
+        if not csrf_token or not submitted_token or not secrets.compare_digest(submitted_token, csrf_token):
+            raise HTTPException(status_code=403, detail="CSRF Token Mismatch")

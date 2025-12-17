@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_password_hash, verify_password, create_refresh_token
 from app.models import User
+from app.core.deps import check_csrf
 
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(directory="app/templates")
@@ -61,7 +62,10 @@ def create_login_response(user_email: str) -> RedirectResponse:
 
 @router.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
-    return templates.TemplateResponse("auth/register.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="auth/register.html"
+    )
 
 @router.post("/register")
 async def register_user(
@@ -75,8 +79,11 @@ async def register_user(
     existing_user = await db.execute(select(User).where(User.email == email))
     if existing_user.scalar_one_or_none():
         return templates.TemplateResponse(
-            "auth/register.html", 
-            {"request": request, "error": "Email уже зарегистрирован"},
+            request=request,
+            name="auth/register.html", 
+            context={
+                "error": "Email уже зарегистрирован"
+            },
             status_code=400
         )
 
@@ -95,8 +102,11 @@ async def register_user(
     except IntegrityError:
         await db.rollback()
         return templates.TemplateResponse(
-            "auth/register.html", 
-            {"request": request, "error": "Ошибка базы данных"},
+            request=request,
+            name="auth/register.html", 
+            context={
+                "error": "Ошибка базы данных"
+            },
             status_code=500
         )
 
@@ -105,9 +115,12 @@ async def register_user(
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("auth/login.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="auth/login.html"
+    )
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(check_csrf)])
 async def login_user(
     request: Request,
     email: str = Form(...),
@@ -129,8 +142,11 @@ async def login_user(
 
     if not user or not is_valid:
         return templates.TemplateResponse(
-            "auth/login.html", 
-            {"request": request, "error": "Неверный email или пароль"},
+            request=request,
+            name="auth/login.html", 
+            context={
+                "error": "Неверный email или пароль"
+            },
             status_code=401 
         )
 

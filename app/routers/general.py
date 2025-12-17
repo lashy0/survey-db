@@ -23,8 +23,12 @@ async def read_root(
 ) -> HTMLResponse:
     surveys = await service.get_active_surveys()
     return templates.TemplateResponse(
+        request=request,
         name="index.html", 
-        context={"request": request, "surveys": surveys, "user": user}
+        context={
+            "surveys": surveys,
+            "user": user
+        }
     )
 
 @router.get("/surveys/{survey_id}", response_class=HTMLResponse)
@@ -43,9 +47,9 @@ async def take_survey_page(
     is_readonly = survey.status in [SurveyStatus.completed, SurveyStatus.archived]
     
     return templates.TemplateResponse(
-        "survey_detail.html",
-        {
-            "request": request,
+        request=request,
+        name="survey_detail.html",
+        context={
             "survey": survey,
             "user": user,
             "existing_response": user_response,

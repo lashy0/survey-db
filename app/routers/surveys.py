@@ -22,15 +22,34 @@ def get_survey_service(db: AsyncSession = Depends(get_db)) -> SurveyService:
 
 @router.get("/create", response_class=HTMLResponse)
 async def create_survey_page(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("surveys/create.html", {"request": request, "user": user})
+    return templates.TemplateResponse(
+        request=request,
+        name="surveys/create.html",
+        context={
+            "user": user
+        }
+    )
 
 @router.get("/partials/question", response_class=HTMLResponse)
 async def get_question_partial(request: Request, index: int):
-    return templates.TemplateResponse("partials/question_form.html", {"request": request, "index": index})
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/question_form.html",
+        context={
+            "index": index
+        }
+    )
 
 @router.get("/partials/option", response_class=HTMLResponse)
 async def get_option_partial(request: Request, q_index: int, o_index: int):
-    return templates.TemplateResponse("partials/option_form.html", {"request": request, "q_index": q_index, "o_index": o_index})
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/option_form.html",
+        context={
+            "q_index": q_index,
+            "o_index": o_index
+        }
+    )
 
 @router.post("/create")
 async def create_survey(

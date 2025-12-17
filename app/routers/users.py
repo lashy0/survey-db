@@ -46,9 +46,9 @@ async def read_users_me(
     countries = (await db.execute(select(Country).order_by(Country.name))).scalars().all()
 
     return templates.TemplateResponse(
-        "users/profile.html", 
-        {
-            "request": request, 
+        request=request,
+        name="users/profile.html", 
+        context={
             "user": current_user,
             "created_surveys": created_surveys,
             "created_count": created_count,
@@ -68,8 +68,11 @@ async def change_password_page(
 ):
     """Form for changing password."""
     return templates.TemplateResponse(
-        "users/change_password.html",
-        {"request": request, "user": current_user}
+        request=request,
+        name="users/change_password.html",
+        context={
+            "user": current_user
+        }
     )
 
 @router.post("/password")
@@ -85,9 +88,9 @@ async def change_password(
     # 1. Проверка старого пароля
     if not verify_password(old_password, current_user.password_hash):
         return templates.TemplateResponse(
-            "users/change_password.html",
-            {
-                "request": request, 
+            request=request,
+            name="users/change_password.html",
+            context={
                 "user": current_user, 
                 "error": "Старый пароль введен неверно"
             }
@@ -96,9 +99,9 @@ async def change_password(
     # 2. Проверка совпадения новых паролей
     if new_password != confirm_password:
         return templates.TemplateResponse(
-            "users/change_password.html",
-            {
-                "request": request, 
+            request=request,
+            name="users/change_password.html",
+            context={
                 "user": current_user, 
                 "error": "Новые пароли не совпадают"
             }

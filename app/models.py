@@ -1,5 +1,5 @@
 import enum
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -114,7 +114,7 @@ class User(Base):
         Enum(UserRole, name="user_role_enum"), default=UserRole.user, nullable=False
     )
     registration_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
 
     # Relationships
@@ -177,7 +177,7 @@ class Survey(Base):
         index=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -285,7 +285,7 @@ class SurveyResponse(Base):
         index=True
     )
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     

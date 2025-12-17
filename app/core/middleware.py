@@ -76,30 +76,6 @@ class CsrfMiddleware(BaseHTTPMiddleware):
         # 2. Сохраняем в state, чтобы было доступно в шаблонах
         request.state.csrf_token = csrf_token
 
-        # 3. Проверка для небезопасных методов
-        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-            # Пропускаем проверку для логина/регистрации если там нет кук (первый вход)
-            # Но лучше проверять всегда.
-            
-            submitted_token = None
-            
-            # А. Ищем в заголовках (для HTMX)
-            if "X-CSRF-Token" in request.headers:
-                submitted_token = request.headers["X-CSRF-Token"]
-            
-            # Б. Ищем в форме (для обычных HTML форм)
-            # Важно: content-type должен быть form-data или x-www-form-urlencoded
-            elif request.headers.get("content-type", "").startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
-                try:
-                    form = await request.form()
-                    submitted_token = form.get("csrf_token")
-                except Exception:
-                    pass
-
-            # Сравнение (безопасное по времени)
-            if not submitted_token or not secrets.compare_digest(submitted_token, csrf_token):
-                return Response("CSRF Token Mismatch", status_code=403)
-
         response = await call_next(request)
 
         # 4. Устанавливаем куку, если её не было

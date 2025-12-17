@@ -43,9 +43,9 @@ async def analytics_dashboard(
     all_surveys = await service.get_all_surveys()
 
     return templates.TemplateResponse(
+        request=request,
         name="admin/analytics.html",
         context={
-            "request": request,
             "user": user, # <--- ПЕРЕДАЕМ В ШАБЛОН
             "kpi": data['kpi'],
             "funnel_data": data['funnel'],
@@ -69,7 +69,13 @@ async def get_anomalies_partial(
     if survey_id: survey_id = int(survey_id)
     
     anomalies = await service.get_anomalies(survey_id)
-    return templates.TemplateResponse("admin/partials/anomalies_table.html", {"request": request, "anomalies": anomalies})
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/partials/anomalies_table.html",
+        context={
+            "anomalies": anomalies
+        }
+    )
 
 @router.get("/tables_view", response_class=HTMLResponse)
 async def view_tables_dashboard(
@@ -79,9 +85,9 @@ async def view_tables_dashboard(
 ):
     tables = await service.get_table_names()
     return templates.TemplateResponse(
-        "admin/tables.html", 
-        {
-            "request": request, 
+        request=request,
+        name="admin/tables.html", 
+        context={
             "user": user, # <--- ПЕРЕДАЕМ В ШАБЛОН
             "tables": tables
         }
@@ -105,9 +111,9 @@ async def get_table_data(
         return HTMLResponse(f"Error: {e}")
 
     return templates.TemplateResponse(
-        "admin/partials/table_content.html",
-        {
-            "request": request,
+        request=request,
+        name="admin/partials/table_content.html",
+        context={
             "table_name": table_name,
             **data, 
             "page": page,
@@ -132,9 +138,9 @@ async def get_create_form(
     options = await service.get_form_options(table_name, columns)
     
     return templates.TemplateResponse(
-        "admin/partials/create_modal.html",
-        {
-            "request": request,
+        request=request,
+        name="admin/partials/create_modal.html",
+        context={
             "table_name": table_name,
             "columns": columns,
             "pk_col": pk_col,
@@ -179,9 +185,9 @@ async def get_edit_form(
     options = await service.get_form_options(table_name, columns)
 
     return templates.TemplateResponse(
-        "admin/partials/edit_modal.html",
-        {
-            "request": request,
+        request=request,
+        name="admin/partials/edit_modal.html",
+        context={
             "table_name": table_name,
             "row": row,
             "columns": columns,
