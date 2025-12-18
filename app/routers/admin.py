@@ -41,6 +41,7 @@ async def analytics_dashboard(
     data = await service.get_dashboard_stats()
     anomalies = await service.get_anomalies(survey_id)
     all_surveys = await service.get_all_surveys()
+    cohort_data = await service.get_cohort_stats()
 
     return templates.TemplateResponse(
         request=request,
@@ -53,6 +54,7 @@ async def analytics_dashboard(
             "tags_data": data['tags'],
             "heatmap_data": data['heatmap'],
             "demographics": data.get('demographics', {'labels': [], 'counts': []}),
+            "cohort_data": cohort_data,
             "anomalies": anomalies,
             "all_surveys": all_surveys,
             "selected_survey_id": survey_id
@@ -311,3 +313,4 @@ async def get_activity_chart(
             "time_series_data": data
         }
     )
+

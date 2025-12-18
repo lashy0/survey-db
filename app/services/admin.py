@@ -1,7 +1,10 @@
 from datetime import datetime, date
 from typing import Optional, Dict, List, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, inspect, select, func, desc, extract, case
+from sqlalchemy import (
+    text, inspect, select, func, desc, extract, case,
+    cast, Date, Numeric
+)
 from app.core.database import engine
 from app.core.security import get_password_hash
 from app.models import User, Survey, SurveyResponse, Tag, survey_tags
@@ -519,4 +522,111 @@ class AdminService:
         return {
             "dates": [str(row.date) for row in activity_rows],
             "counts": [int(row.cnt) for row in activity_rows]
+        }
+    
+    async def get_cohort_stats(self) -> Dict[str, Any]:
+        """
+        Строит данные для когортного анализа (Retention Rate) с использованием SQLAlchemy Core.
+        """
+        
+        # 1. CTE: Когорты пользователей (User Cohorts)
+        # Получаем месяц регистрации для каждого пользователя
+        uc_cte = (
+            select(
+                User.user_id,
+                cast(func.date_trunc('month', User.registration_date), Date).label('cohort_month')
+            )
+            .cte('user_cohorts')
+        )
+
+        # 2. CTE: Размер когорты (Cohort Size)
+        # Считаем сколько людей зарегистрировалось в каждом месяце
+        cs_cte = (
+            select(
+                uc_cte.c.cohort_month,
+                func.count().label('total_users')
+            )
+            .group_by(uc_cte.c.cohort_month)
+            .cte('cohort_size')
+        )
+
+        # 3. CTE: Активность пользователей (User Activities)
+        # Группируем ответы по пользователям и месяцам
+        ua_cte = (
+            select(
+                SurveyResponse.user_id,
+                cast(func.date_trunc('month', SurveyResponse.completed_at), Date).label('activity_month')
+            )
+            .where(SurveyResponse.completed_at.is_not(None))
+            .group_by(SurveyResponse.user_id, text("2")) # Группировка по user_id и месяцу
+            .cte('user_activities')
+        )
+
+        # 4. Вычисление Month Lag (разница в месяцах)
+        # Формула: (Год активности - Год когорты)*12 + (Месяц активности - Месяц когорты)
+        # Используем func.age (Postgres specific)
+        age_expression = func.age(ua_cte.c.activity_month, uc_cte.c.cohort_month)
+        month_lag_col = cast(
+            extract('year', age_expression) * 12 + extract('month', age_expression), 
+            Numeric
+        ).label('month_lag')
+
+        # 5. Вычисление Retention %
+        # (Активные / Всего) * 100
+        active_count = func.count(func.distinct(uc_cte.c.user_id))
+        retention_pct = func.round(
+            cast(active_count, Numeric) / cs_cte.c.total_users * 100, 
+            1
+        ).label('retention_pct')
+
+        # 6. Финальный запрос
+        stmt = (
+            select(
+                func.to_char(uc_cte.c.cohort_month, 'YYYY-MM').label('cohort'),
+                cs_cte.c.total_users,
+                month_lag_col,
+                retention_pct
+            )
+            .select_from(uc_cte)
+            .join(cs_cte, uc_cte.c.cohort_month == cs_cte.c.cohort_month)
+            .join(ua_cte, uc_cte.c.user_id == ua_cte.c.user_id)
+            .where(ua_cte.c.activity_month >= uc_cte.c.cohort_month) # Активность после регистрации
+            .group_by(uc_cte.c.cohort_month, cs_cte.c.total_users, month_lag_col)
+            .order_by(uc_cte.c.cohort_month, month_lag_col)
+        )
+
+        # Выполнение
+        result = (await self.db.execute(stmt)).all()
+        
+        # --- ДАЛЕЕ ЛОГИКА ФОРМАТИРОВАНИЯ (ОСТАЕТСЯ ПРЕЖНЕЙ) ---
+        if not result:
+            return {"z": [], "x": [], "y": [], "text": []}
+
+        # 1. Оси
+        cohorts = sorted(list(set(row.cohort for row in result)))
+        # Преобразуем lag в int, так как из базы может прийти decimal
+        lags_values = [int(row.month_lag) for row in result]
+        max_lag = max(lags_values) if lags_values else 0
+        lags = list(range(max_lag + 1))
+        
+        # 2. Матрицы
+        z = [[None for _ in lags] for _ in cohorts]
+        annotation_text = [["" for _ in lags] for _ in cohorts]
+        
+        cohort_idx = {c: i for i, c in enumerate(cohorts)}
+        
+        for row in result:
+            r_idx = cohort_idx[row.cohort]
+            c_idx = int(row.month_lag)
+            
+            if c_idx < len(lags):
+                val = float(row.retention_pct)
+                z[r_idx][c_idx] = val
+                annotation_text[r_idx][c_idx] = f"{val}%"
+
+        return {
+            "y": cohorts,
+            "x": [f"M+{i}" for i in lags],
+            "z": z,
+            "text": annotation_text
         }

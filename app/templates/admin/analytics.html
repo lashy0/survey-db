@@ -140,6 +140,19 @@
         </div>
     </div>
 
+        
+    <!-- КОГОРТНЫЙ АНАЛИЗ (HEATMAP) -->
+    <div class="mb-8">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div class="mb-4">
+                <h3 class="text-lg font-bold text-gray-800">Когортный анализ</h3>
+                <p class="text-xs text-gray-400 mt-1">Процент пользователей, возвращающихся проходить опросы в следующие месяцы после регистрации.</p>
+            </div>
+            <div id="chart-cohorts" class="w-full h-80"></div>
+        </div>
+    </div>
+  
+
     <!-- Аномалии (Table) -->
     <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col mb-8">
         <!-- Шапка с фильтром -->
@@ -267,6 +280,47 @@
     };
 
     Plotly.newPlot('chart-demographics', [demographicsData], layoutDemo, {displayModeBar: false, responsive: true});
+
+    // Cohorts
+    const cohortDataRaw = {{ cohort_data | tojson }};
+    
+    if (cohortDataRaw.z && cohortDataRaw.z.length > 0) {
+        const cohortTrace = {
+            z: cohortDataRaw.z,
+            x: cohortDataRaw.x,
+            y: cohortDataRaw.y,
+            text: cohortDataRaw.text, // Значения для отображения
+            texttemplate: "%{text}",  // Показываем текст в клетках
+            type: 'heatmap',
+            color: ['#93c5fd', '#3b82f6', '#1e40af'],
+            showscale: true,
+            xgap: 2,
+            ygap: 2,
+            hovertemplate: 'Когорта: <b>%{y}</b><br>Месяц жизни: <b>%{x}</b><br>Retention: <b>%{z}%</b><extra></extra>'
+        };
+
+        const layoutCohort = {
+            margin: {t: 20, l: 80, r: 20, b: 50}, // Увеличили левый отступ (l) для дат когорт
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            xaxis: { 
+                title: 'Месяцы после регистрации',
+                tickfont: fontConfig,
+                side: 'bottom'
+            },
+            yaxis: {
+                title: '', // Убрали заголовок Y, чтобы не мешал датам
+                tickfont: { ...fontConfig, size: 11 }, // Чуть меньше шрифт
+                autorange: 'reversed' // Новые когорты снизу
+            }
+        };
+
+        Plotly.newPlot('chart-cohorts', [cohortTrace], layoutCohort, {displayModeBar: false, responsive: true});
+    } else {
+        // Заглушка, если данных нет
+        document.getElementById('chart-cohorts').innerHTML = 
+            '<div class="flex items-center justify-center h-full text-gray-400">Недостаточно данных для когортного анализа</div>';
+    }
 </script>
 
 <style>
