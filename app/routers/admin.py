@@ -29,7 +29,7 @@ async def analytics_dashboard(
     request: Request,
     survey_id: Union[int, str, None] = None, 
     service: AdminService = Depends(get_admin_service),
-    user: User = Depends(get_current_user) # <--- ВЕРНУЛИ USER
+    user: User = Depends(get_current_user)
 ) -> HTMLResponse:
     if survey_id is not None:
         try:
@@ -52,6 +52,7 @@ async def analytics_dashboard(
             "time_series_data": data['time_series'],
             "tags_data": data['tags'],
             "heatmap_data": data['heatmap'],
+            "demographics": data.get('demographics', {'labels': [], 'counts': []}),
             "anomalies": anomalies,
             "all_surveys": all_surveys,
             "selected_survey_id": survey_id
@@ -267,4 +268,20 @@ async def export_table_csv(
         iter_csv(),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@router.get("/analytics/heatmap", response_class=HTMLResponse)
+async def get_heatmap_partial(
+    request: Request,
+    period: str = "all",
+    service: AdminService = Depends(get_admin_service)
+):
+    """Возвращает только HTML кусок с графиком Heatmap"""
+    data = await service.get_heatmap_stats(period)
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/partials/heatmap.html",
+        context={
+            "heatmap_data": data
+        }
     )

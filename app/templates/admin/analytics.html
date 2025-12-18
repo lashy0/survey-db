@@ -43,64 +43,120 @@
     <!-- 2.5. HEATMAP ROW -->
     <div class="mb-8">
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <h3 class="text-lg font-bold text-gray-800 mb-4">Тепловая карта активности (День недели × Время)</h3>
-            <div id="chart-heatmap" class="w-full h-80"></div>
-        </div>
-    </div>
-
-    <!-- 3. CHARTS ROW 2 -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-        <!-- Теги (Pie Chart) -->
-        <div class="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <h3 class="text-lg font-bold text-gray-800 mb-4">Интересы аудитории</h3>
-            <div id="chart-tags" class="w-full h-64"></div>
-        </div>
-
-        <!-- Аномалии (Table) -->
-        <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
-            <!-- Шапка с фильтром -->
-            <div class="p-6 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white z-20">
+            <!-- Шапка с заголовком и фильтром -->
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                 <div>
                     <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <div class="p-1.5 bg-red-50 rounded-lg">
-                            <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        </div>
-                        Подозрительно быстрые
+                        Тепловая карта активности
+                        <!-- Индикатор загрузки HTMX -->
+                        <svg id="heatmap-loader" class="htmx-indicator w-5 h-5 text-blue-600 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
                     </h3>
-                    <p class="text-xs text-gray-400 mt-1 ml-1">Быстрее чем (Среднее - 1.5σ)</p>
+                    <p class="text-xs text-gray-400 mt-1">В какое время пользователи чаще всего проходят опросы</p>
                 </div>
                 
-                <!-- ФИЛЬТР -->
-                <div class="relative w-full sm:w-64">
-                    <select name="survey_id" 
-                            hx-get="/admin/analytics/anomalies" 
-                            hx-target="#anomalies-container" 
-                            hx-swap="outerHTML"
-                            class="w-full pl-3 pr-10 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 hover:bg-white transition-colors cursor-pointer appearance-none">
-                        <option value="">Все опросы ({{ all_surveys|length }})</option>
-                        {% for s in all_surveys %}
-                        <option value="{{ s.survey_id }}" {% if selected_survey_id == s.survey_id %}selected{% endif %}>
-                            {{ s.title }}
-                        </option>
-                        {% endfor %}
+                <!-- FILTER SELECT -->
+                <div class="relative">
+                    <select name="period"
+                            hx-get="/admin/analytics/heatmap"
+                            hx-target="#heatmap-wrapper"
+                            hx-swap="innerHTML"
+                            hx-indicator="#heatmap-loader"
+                            class="appearance-none bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full pl-3 pr-8 py-2 cursor-pointer hover:bg-white transition">
+                        <option value="all" selected>За всё время</option>
+                        <option value="year">Текущий год</option>
+                        <option value="30d">30 дней</option>
+                        <option value="7d">7 дней</option>
                     </select>
-                    <!-- Стрелочка кастомная -->
-                    <div class="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-gray-500">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                    <!-- Кастомная стрелочка -->
+                    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                     </div>
                 </div>
             </div>
 
-            <!-- Контейнер таблицы (сюда HTMX подгрузит anomalies_table.html) -->
-            {% include "admin/partials/anomalies_table.html" %}
-            
+            <!-- Сюда HTMX будет загружать график -->
+            <div id="heatmap-wrapper">
+                 <!-- Первичная загрузка (include) -->
+                 {% include "admin/partials/heatmap.html" %}
+            </div>
         </div>
+    </div>
+
+    <!-- === НОВЫЙ ROW: Демография + Теги === -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        <!-- ГРАФИК 1: Демография (НОВЫЙ) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Активность по возрастным группам</h3>
+            <div id="chart-demographics" class="w-full h-80"></div>
+        </div>
+
+        <!-- ГРАФИК 2: Интересы (Перенесли сюда, чтобы было красиво 2 колонки) -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Интересы аудитории</h3>
+            <div id="chart-tags" class="w-full h-80"></div>
+        </div>
+    </div>
+
+    <!-- Аномалии (Table) -->
+    <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
+        <!-- Шапка с фильтром -->
+        <div class="p-6 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white z-20">
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <div class="p-1.5 bg-red-50 rounded-lg">
+                        <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </div>
+                    Подозрительно быстрые
+
+                    <!-- 1. ИНДИКАТОР ЗАГРУЗКИ (СПИННЕР) -->
+                    <svg id="anomalies-loader" class="htmx-indicator w-5 h-5 text-blue-600 animate-spin ml-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </h3>
+                <p class="text-xs text-gray-400 mt-1 ml-1">Быстрее чем (Среднее - 1.5σ)</p>
+            </div>
+            
+            <!-- ФИЛЬТР -->
+            <div class="relative w-full sm:w-64">
+                <select name="survey_id" 
+                        hx-get="/admin/analytics/anomalies" 
+                        hx-target="#anomalies-container" 
+                        hx-swap="outerHTML"
+                        hx-indicator="#anomalies-loader"
+                        class="w-full pl-3 pr-10 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 hover:bg-white transition-colors cursor-pointer appearance-none">
+                    <option value="">Все опросы ({{ all_surveys|length }})</option>
+                    {% for s in all_surveys %}
+                    <option value="{{ s.survey_id }}" {% if selected_survey_id == s.survey_id %}selected{% endif %}>
+                        {{ s.title }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <!-- Стрелочка кастомная -->
+                <div class="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-gray-500">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Контейнер таблицы (сюда HTMX подгрузит anomalies_table.html) -->
+        {% include "admin/partials/anomalies_table.html" %}
+        
     </div>
 
 </div>
 
 <!-- Инициализация графиков Plotly -->
 <script>
+    const fontConfig = {
+        family: 'ui-sans-serif, system-ui, sans-serif',
+        size: 12,
+        color: '#4b5563'
+    };
+
     // 1. Time Series
     const timeData = {
         x: {{ time_series_data.dates | tojson }},
@@ -108,12 +164,23 @@
         type: 'scatter',
         mode: 'lines+markers',
         line: {shape: 'spline', color: '#2563eb'},
-        fill: 'tozeroy'
+        fill: 'tozeroy',
+        hovertemplate: '<b>%{x}</b><br>Ответов: %{y}<extra></extra>'
     };
     Plotly.newPlot('chart-timeline', [timeData], {
         margin: {t: 10, l: 30, r: 10, b: 30},
         paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        xaxis: { 
+            automargin: true, 
+            tickfont: fontConfig,
+            tickformat: '%d.%m' // Формат даты
+        },
+        yaxis: { 
+            automargin: true, 
+            tickfont: fontConfig,
+            gridcolor: '#e5e7eb'
+        }
     }, {displayModeBar: false, responsive: true});
 
     // 2. Funnel
@@ -123,65 +190,70 @@
         y: {{ funnel_data.counts | tojson }}, 
         type: 'bar',
         marker: {
-            color: ['#93c5fd', '#3b82f6', '#1e40af']
+            color: ['#93c5fd', '#3b82f6', '#1e40af'],
+            line: { width: 0 }
         },
         text: {{ funnel_data.counts | tojson }}.map(String),
         textposition: 'auto',
+        hovertemplate: '<b>%{x}</b><br>Количество: %{y}<extra></extra>'
     };
     Plotly.newPlot('chart-funnel', [funnelData], {
         margin: {t: 10, l: 30, r: 10, b: 30},
         paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)'
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        xaxis: { automargin: true, tickfont: fontConfig },
+        yaxis: { automargin: true, tickfont: fontConfig, gridcolor: '#e5e7eb' }
     }, {displayModeBar: false, responsive: true});
 
-    // 3. Tags (Donut)
-    // ОБРАТИТЕ ВНИМАНИЕ: tags_data.counts вместо .values
+    // 3. Tags
     const tagsData = {
         labels: {{ tags_data.labels | tojson }},
         values: {{ tags_data.counts | tojson }},
         type: 'pie',
-        hole: 0.4,
+        hole: 0.5,
         marker: {
             colors: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
-        }
+        },
+        textinfo: 'label+percent',
+        textposition: 'outside',
+        automargin: true,
+        hovertemplate: 'Возраст: <b>%{x}</b><br>Ответов: %{y}<extra></extra>'
     };
     Plotly.newPlot('chart-tags', [tagsData], {
         margin: {t: 0, l: 0, r: 0, b: 0},
-        showlegend: true,
-        legend: {orientation: 'h', y: -0.1}
+        showlegend: false,
+        paper_bgcolor: 'rgba(0,0,0,0)',
     }, {displayModeBar: false, responsive: true});
 
-    // 5. Heatmap
-    const heatmapData = [{
-        z: {{ heatmap_data.z | tojson }},
-        x: {{ heatmap_data.x | tojson }},
-        y: {{ heatmap_data.y | tojson }},
-        type: 'heatmap',
-        colorscale: [
-            [0, '#f8fafc'],    // 0: Фон (Slate-50)
-            [0.001, '#e0f2fe'], // 1: Очень светло (Sky-100)
-            [0.2, '#7dd3fc'],  // Мало (Sky-300)
-            [0.5, '#0ea5e9'],  // Средне (Sky-500)
-            [0.8, '#0369a1'],  // Много (Sky-700)
-            [1, '#0c4a6e']     // Максимум (Sky-900)
-        ],
-        showscale: true,
-        xgap: 2, // Отступ по горизонтали
-        ygap: 2, // Отступ по вертикали
-        hoverongaps: false
-    }];
-    
-    Plotly.newPlot('chart-heatmap', heatmapData, {
-        margin: {t: 10, l: 30, r: 10, b: 30},
-        yaxis: {
-            autorange: 'reversed', // Переворачивает ось Y (Пн будет сверху)
-            tickfont: {size: 11}
+    // 5. Демография
+    const demographicsData = {
+        x: {{ demographics.labels | tojson }},
+        y: {{ demographics.counts | tojson }},
+        type: 'bar',
+        marker: {
+            color: '#8b5cf6', // Фиолетовый цвет
+            opacity: 0.8,
+            line: { width: 0 }
         },
+        text: {{ demographics.counts | tojson }}.map(String),
+        textposition: 'auto',
+    };
+    
+    const layoutDemo = {
+        margin: {t: 10, l: 30, r: 10, b: 30},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
         xaxis: {
-            tickfont: {size: 10},
-            dtick: 2 // Показывать каждый 2-й час, чтобы не мельчило
+            title: 'Возрастная группа',
+            automargin: true,
+        },
+        yaxis: {
+            title: 'Кол-во ответов',
+            automargin: true,
         }
-    }, {displayModeBar: false, responsive: true});
+    };
+
+    Plotly.newPlot('chart-demographics', [demographicsData], layoutDemo, {displayModeBar: false, responsive: true});
 </script>
 
 <style>

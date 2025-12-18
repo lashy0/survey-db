@@ -1,6 +1,7 @@
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, inspect, select, func, desc, extract
+from sqlalchemy import text, inspect, select, func, desc, extract, case
 from app.core.database import engine
 from app.core.security import get_password_hash
 from app.models import User, Survey, SurveyResponse, Tag, survey_tags
@@ -54,6 +55,34 @@ class AdminService:
         )
         heatmap_rows = heatmap_res.all()
 
+        # Возрастная группа
+        age_val = extract('year', func.age(User.birth_date))
+
+        age_case = case(
+            (age_val < 18, 'До 18'),
+            (age_val.between(18, 24), '18-24'),
+            (age_val.between(25, 34), '25-34'),
+            (age_val.between(35, 44), '35-44'),
+            (age_val >= 45, '45+'),
+            else_='Не указано'
+        ).label("age_group")
+
+        demographics_res = await self.db.execute(
+            select(
+                age_case, 
+                func.count(SurveyResponse.response_id).label("cnt")
+            )
+            .select_from(SurveyResponse)
+            .join(User, SurveyResponse.user_id == User.user_id)
+            .where(SurveyResponse.completed_at.is_not(None)) # Только завершенные
+            .group_by(age_case)
+            .order_by(age_case)
+        )
+        demographics_rows = demographics_res.all()
+
+        sort_order = {'До 18': 1, '18-24': 2, '25-34': 3, '35-44': 4, '45+': 5, 'Не указано': 6}
+        sorted_demo = sorted(demographics_rows, key=lambda x: sort_order.get(x.age_group, 99))
+
         # Форматирование данных
         heatmap_z = [[0 for _ in range(24)] for _ in range(7)]
         for row in heatmap_rows:
@@ -80,7 +109,60 @@ class AdminService:
                 "z": heatmap_z,
                 "x": [f"{h:02d}:00" for h in range(24)],
                 "y": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+            },
+            "demographics": {
+                "labels": [row.age_group for row in sorted_demo],
+                "counts": [int(row.cnt) for row in sorted_demo]
             }
+        }
+    
+    async def get_heatmap_stats(self, period: str = "all") -> Dict[str, Any]:
+        """
+        Получает данные для тепловой карты с учетом фильтра по времени.
+        period: '7d', '30d', 'year', 'all'
+        """
+        # 1. Формируем условие фильтрации
+        where_clause = SurveyResponse.started_at.is_not(None) # Базовое условие
+        
+        if period == '7d':
+            # За последние 7 дней
+            where_clause = (SurveyResponse.started_at >= func.now() - text("INTERVAL '7 days'"))
+        elif period == '30d':
+            # За последние 30 дней
+            where_clause = (SurveyResponse.started_at >= func.now() - text("INTERVAL '30 days'"))
+        elif period == 'year':
+             # С начала текущего года
+            where_clause = (extract('year', SurveyResponse.started_at) == extract('year', func.now()))
+        
+        # 2. Запрос
+        heatmap_res = await self.db.execute(
+            select(
+                extract('isodow', SurveyResponse.started_at).label("dow"),
+                extract('hour', SurveyResponse.started_at).label("hour"),
+                func.count(SurveyResponse.response_id).label("cnt")
+            )
+            .where(where_clause) # <--- Применяем фильтр
+            .group_by("dow", "hour")
+        )
+        heatmap_rows = heatmap_res.all()
+
+        # 3. Формирование матрицы Z (7 дней * 24 часа)
+        heatmap_z = [[0 for _ in range(24)] for _ in range(7)]
+        total_hits = 0 # Для отладки или заголовка
+        
+        for row in heatmap_rows:
+            d = int(row.dow) - 1 # isodow: 1=Monday -> index 0
+            h = int(row.hour)
+            if 0 <= d < 7 and 0 <= h < 24:
+                heatmap_z[d][h] = row.cnt
+                total_hits += row.cnt
+        
+        return {
+            "z": heatmap_z,
+            "x": [f"{h:02d}:00" for h in range(24)],
+            "y": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
+            "period": period,
+            "total": total_hits
         }
 
     async def get_anomalies(self, survey_id: Optional[int] = None):
