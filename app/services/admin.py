@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, date
 from typing import Optional, Dict, List, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, inspect, select, func, desc, extract, case
@@ -494,3 +494,29 @@ class AdminService:
         # Возвращаем имена колонок и сам объект результата (который можно итерировать)
         result = await self.db.stream(sql, params)
         return columns, result
+    
+    async def get_activity_stats(self, start_date: Optional[date] = None, end_date: Optional[date] = None) -> Dict[str, Any]:
+        """Получает статистику активности с фильтрацией по датам."""
+        
+        query = (
+            select(
+                func.date(SurveyResponse.started_at).label("date"),
+                func.count(SurveyResponse.response_id).label("cnt")
+            )
+            .group_by(func.date(SurveyResponse.started_at))
+            .order_by(func.date(SurveyResponse.started_at))
+        )
+
+        # Фильтры
+        if start_date:
+            query = query.where(func.date(SurveyResponse.started_at) >= start_date)
+        if end_date:
+            query = query.where(func.date(SurveyResponse.started_at) <= end_date)
+
+        activity_res = await self.db.execute(query)
+        activity_rows = activity_res.all()
+
+        return {
+            "dates": [str(row.date) for row in activity_rows],
+            "counts": [int(row.cnt) for row in activity_rows]
+        }

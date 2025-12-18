@@ -1,53 +1,136 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <h2 class="text-3xl font-bold mb-8 text-gray-800">Доступные опросы</h2>
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {% for survey in surveys %}
-        <div class="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition border border-gray-100 flex flex-col h-full">
-            
-            <!-- Теги -->
-            <div class="flex flex-wrap gap-2 mb-4">
-                {% for tag in survey.tags %}
-                <span class="bg-blue-50 text-blue-600 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-blue-100">
-                    #{{ tag.name }}
-                </span>
-                {% endfor %}
-            </div>
+    {% if not user %}
+    <div class="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8 mb-10 text-white shadow-lg text-center md:text-left md:flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold mb-2">Добро пожаловать</h1>
+            <p class="text-blue-100 max-w-xl">Участвуйте в опросах, чтобы получить рекомендации.</p>
+        </div>
+        <div class="mt-6 md:mt-0">
+            <a href="/register" class="bg-white text-blue-700 px-6 py-3 rounded-xl font-bold shadow hover:bg-blue-50 transition">Начать</a>
+        </div>
+    </div>
+    {% endif %}
 
-            <h3 class="text-xl font-bold mb-2 text-gray-800 line-clamp-2">{{ survey.title }}</h3>
-            <p class="text-gray-500 mb-6 text-sm line-clamp-3 flex-grow">{{ survey.description }}</p>
-            
-            <div class="flex justify-between items-center mt-auto border-t border-gray-50 pt-4">
+    <!-- === БЛОК РЕКОМЕНДАЦИЙ === -->
+    {% if recommendations %}
+    <div class="mb-10">
+        <div class="flex items-center gap-2 mb-6">
+            <span class="bg-yellow-100 text-yellow-700 p-1.5 rounded-lg">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </span>
+            <h2 class="text-2xl font-bold text-gray-800">Рекомендовано для вас</h2>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {% for survey in recommendations %}
+            <!-- Карточка рекомендации (Выделена цветом) -->
+            <div class="bg-gradient-to-b from-yellow-50 to-white p-6 rounded-2xl shadow-sm hover:shadow-md transition border border-yellow-100 flex flex-col h-full relative overflow-hidden group">
+                <div class="absolute top-0 right-0 w-16 h-16 bg-yellow-400 opacity-10 rounded-bl-full -mr-8 -mt-8 transition group-hover:scale-150"></div>
                 
-                <!-- НОВЫЙ КОД СТАТУСОВ -->
-                {% if survey.status.value == 'active' %}
-                    <span class="px-3 py-1 text-xs rounded-full font-medium bg-green-100 text-green-700">
+                <div class="flex flex-wrap gap-2 mb-4">
+                    {% for tag in survey.tags %}
+                    <span class="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                        {{ tag.name }}
+                    </span>
+                    {% endfor %}
+                </div>
+                
+                <h3 class="text-xl font-bold mb-2 text-gray-800 line-clamp-2">{{ survey.title }}</h3>
+                <p class="text-gray-500 mb-6 text-sm line-clamp-3 flex-grow">{{ survey.description }}</p>
+                
+                <div class="mt-auto pt-4 border-t border-yellow-100">
+                    <a href="/surveys/{{ survey.survey_id }}" class="block w-full text-center bg-yellow-500 text-white px-5 py-2.5 rounded-xl hover:bg-yellow-600 transition font-bold shadow-sm">
+                        Пройти сейчас
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- === АКТИВНЫЕ ОПРОСЫ === -->
+    {% if active_surveys %}
+    <div class="mb-12">
+        <h2 class="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
+            <span class="p-1.5 bg-green-100 rounded-lg text-green-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </span>
+            Активные опросы
+        </h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for survey in active_surveys %}
+            <div class="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition border border-gray-100 flex flex-col h-full">
+                <div class="flex flex-wrap gap-2 mb-4">
+                    {% for tag in survey.tags %}
+                    <span class="bg-blue-50 text-blue-600 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-blue-100">
+                        #{{ tag.name }}
+                    </span>
+                    {% endfor %}
+                </div>
+                <h3 class="text-xl font-bold mb-2 text-gray-800 line-clamp-2">{{ survey.title }}</h3>
+                <p class="text-gray-500 mb-6 text-sm line-clamp-3 flex-grow">{{ survey.description }}</p>
+                <div class="flex justify-between items-center mt-auto border-t border-gray-50 pt-4">
+                    <span class="px-3 py-1 text-xs rounded-full font-medium bg-green-100 text-green-700 border border-green-200">
                         Активен
                     </span>
-                {% elif survey.status.value == 'completed' %}
-                    <span class="px-3 py-1 text-xs rounded-full font-medium bg-blue-100 text-blue-700">
-                        Завершен
-                    </span>
-                {% else %}
-                    <span class="px-3 py-1 text-xs rounded-full font-medium bg-gray-100 text-gray-600">
-                        {{ survey.status.value }}
-                    </span>
-                {% endif %}
-                
-                <!-- Кнопка -->
-                {% if survey.status.value == 'active' %}
-                    <a href="/surveys/{{ survey.survey_id }}" class="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition font-medium text-sm shadow-sm hover:shadow-md">
+                    <a href="/surveys/{{ survey.survey_id }}" class="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition font-medium text-sm shadow-sm">
                         Пройти
                     </a>
-                {% else %}
-                    <a href="/surveys/{{ survey.survey_id }}" class="border border-blue-500 text-blue-600 px-5 py-2 rounded-lg hover:bg-blue-50 transition font-medium text-sm">
-                        Просмотреть
-                    </a>
-                {% endif %}
+                </div>
             </div>
+            {% endfor %}
         </div>
-        {% endfor %}
     </div>
+    {% endif %}
+
+
+    <!-- === ЗАВЕРШЕННЫЕ ОПРОСЫ === -->
+    {% if completed_surveys %}
+    <div>
+        <h2 class="text-xl font-bold mb-6 text-gray-500 flex items-center gap-2 uppercase tracking-wide text-sm">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+            Архив опросов
+        </h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-80 hover:opacity-100 transition duration-300">
+            {% for survey in completed_surveys %}
+            <div class="bg-gray-50 p-6 rounded-2xl border border-gray-200 flex flex-col h-full grayscale-[50%] hover:grayscale-0 transition">
+                <div class="flex flex-wrap gap-2 mb-4">
+                    {% for tag in survey.tags %}
+                    <span class="bg-gray-200 text-gray-600 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                        {{ tag.name }}
+                    </span>
+                    {% endfor %}
+                </div>
+                <h3 class="text-lg font-bold mb-2 text-gray-700 line-clamp-2">{{ survey.title }}</h3>
+                <p class="text-gray-500 mb-6 text-sm line-clamp-3 flex-grow">{{ survey.description }}</p>
+                <div class="flex justify-between items-center mt-auto border-t border-gray-200 pt-4">
+                    <span class="px-3 py-1 text-xs rounded-full font-medium bg-gray-200 text-gray-600">
+                        Завершен
+                    </span>
+                    <a href="/surveys/{{ survey.survey_id }}" class="text-blue-600 hover:text-blue-800 font-medium text-sm flex items-center gap-1">
+                        Просмотр
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Если вообще ничего нет -->
+    {% if not active_surveys and not completed_surveys and not recommendations %}
+        <div class="text-center py-16 bg-white rounded-2xl border border-dashed border-gray-300">
+            <svg class="mx-auto h-12 w-12 text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10a9 9 0 0118 0v1m-6-4l-4-4m0 0l-4 4m4-4v12" />
+            </svg>
+            <p class="text-gray-500">Сейчас нет доступных опросов.</p>
+        </div>
+    {% endif %}
+
 {% endblock %}

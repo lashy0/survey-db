@@ -285,3 +285,29 @@ async def get_heatmap_partial(
             "heatmap_data": data
         }
     )
+
+@router.get("/analytics/activity", response_class=HTMLResponse)
+async def get_activity_chart(
+    request: Request,
+    start_date: Optional[str] = None, # Приходит как строка "YYYY-MM-DD" или ""
+    end_date: Optional[str] = None,
+    service: AdminService = Depends(get_admin_service)
+):
+    # Преобразование строк в date объекты
+    s_date, e_date = None, None
+    if start_date:
+        try: s_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        except: pass
+    if end_date:
+        try: e_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except: pass
+
+    data = await service.get_activity_stats(s_date, e_date)
+    
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/partials/activity_chart.html",
+        context={
+            "time_series_data": data
+        }
+    )

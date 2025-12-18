@@ -1,0 +1,46 @@
+<div id="chart-timeline" class="w-full h-80 fade-in"></div>
+
+<script>
+    (function() {
+        const fontConfig = { 
+            family: 'ui-sans-serif, system-ui, sans-serif', 
+            size: 13, 
+            color: '#374151' 
+        };
+
+
+        const timeData = {
+            x: {{ time_series_data.dates | tojson }},
+            y: {{ time_series_data.counts | tojson }},
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: {shape: 'spline', color: '#2563eb', width: 3},
+            fill: 'tozeroy',
+            hovertemplate: '<b>%{x}</b><br>Ответов: %{y}<extra></extra>'
+        };
+
+        Plotly.newPlot('chart-timeline', [timeData], {
+            margin: {t: 20, l: 30, r: 20, b: 60},
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            xaxis: { 
+                automargin: true, 
+                tickfont: fontConfig,
+                tickformat: '%d.%m',
+                tickangle: -45,
+                nticks: 10
+            },
+            yaxis: { 
+                automargin: true, 
+                tickfont: fontConfig,
+                gridcolor: '#e5e7eb',
+                rangemode: 'tozero'
+            }
+        }, {displayModeBar: false, responsive: true});
+    })();
+</script>
+
+<style>
+    .fade-in { animation: fadeIn 0.5s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>

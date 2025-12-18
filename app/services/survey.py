@@ -7,26 +7,27 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     User, Survey, Question, Option, Tag, 
-    SurveyResponse, UserAnswer, SurveyStatus, QuestionType, UserRole
+    SurveyResponse, UserAnswer, SurveyStatus, QuestionType, UserRole,
+    survey_tags
 )
 from app.schemas import SurveyCreateForm
-from app.core.security import get_password_hash # Если нужно, но тут вряд ли
+
 
 class SurveyService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def get_active_surveys(self) -> List[Survey]:
-        """Получает список активных опросов для главной страницы."""
+    async def get_public_surveys(self) -> List[Survey]:
+        """Получает список ВСЕХ публичных опросов (активные + завершенные)."""
         query = (
             select(Survey)
-            .where(Survey.status != SurveyStatus.draft)
+            .where(Survey.status != SurveyStatus.draft) # Исключаем только черновики
             .options(selectinload(Survey.tags))
             .order_by(Survey.created_at.desc())
         )
         return (await self.db.execute(query)).scalars().all()
 
-    async def get_survey_details(self, survey_id: int, user_id: Optional[int] = None):
+    async def get_survey_details(self, survey_id: int, user: Optional[User] = None):
         """
         Получает полную информацию об опросе для прохождения.
         Возвращает: survey, user_response (если есть), existing_answers (dict)
@@ -42,8 +43,18 @@ class SurveyService:
         )
         survey = (await self.db.execute(query)).scalar_one_or_none()
         
-        if not survey or survey.status == SurveyStatus.draft:
+        if not survey:
             return None, None, None
+            
+        if survey.status == SurveyStatus.draft:
+            # Разрешаем, если пользователь - автор ИЛИ админ
+            allowed = False
+            if user:
+                if user.role == UserRole.admin or user.user_id == survey.author_id:
+                    allowed = True
+            
+            if not allowed:
+                return None, None, None
 
         # Сортируем вопросы
         survey.questions.sort(key=lambda q: q.position)
@@ -51,12 +62,12 @@ class SurveyService:
         user_response = None
         existing_answers = {}
         
-        if user_id:
+        if user:
             resp_query = (
                 select(SurveyResponse)
                 .where(
                     SurveyResponse.survey_id == survey_id,
-                    SurveyResponse.user_id == user_id
+                    SurveyResponse.user_id == user.user_id
                 )
                 .options(selectinload(SurveyResponse.answers))
             )
@@ -282,3 +293,65 @@ class SurveyService:
                     await self.db.delete(ans)
 
         await self.db.commit()
+    
+    async def get_recommendations(self, user_id: int, limit: int = 3) -> List[Survey]:
+        """
+        Рекомендательная система (Упрощенная и надежная версия):
+        """
+        # 1. Сначала получаем ID опросов, которые юзер УЖЕ прошел
+        # Делаем это отдельным запросом, чтобы избежать проблем с пустыми подзапросами
+        taken_ids_query = select(SurveyResponse.survey_id).where(SurveyResponse.user_id == user_id)
+        taken_ids = (await self.db.execute(taken_ids_query)).scalars().all()
+        
+        # Превращаем в список (если пусто, будет просто [])
+        taken_ids_list = list(taken_ids)
+
+        # 2. Получаем любимые теги пользователя (на основе прошлых ответов)
+        user_tags_ids = []
+        if taken_ids_list:
+            user_tags_query = (
+                select(survey_tags.c.tag_id)
+                .join(SurveyResponse, SurveyResponse.survey_id == survey_tags.c.survey_id)
+                .where(SurveyResponse.user_id == user_id)
+            )
+            user_tags_ids = (await self.db.execute(user_tags_query)).scalars().all()
+
+        # 3. ПОИСК ПО ТЕГАМ (Content-Based)
+        # Ищем активные опросы с такими же тегами, которые юзер еще НЕ проходил
+        result = []
+        if user_tags_ids:
+            query = (
+                select(Survey)
+                .join(survey_tags, Survey.survey_id == survey_tags.c.survey_id)
+                .where(
+                    Survey.status == SurveyStatus.active,
+                    survey_tags.c.tag_id.in_(user_tags_ids)
+                )
+                .options(selectinload(Survey.tags))
+            )
+            # Фильтр "Не пройденные" добавляем в Python или через условие, если список не пуст
+            if taken_ids_list:
+                query = query.where(Survey.survey_id.not_in(taken_ids_list))
+                
+            query = query.group_by(Survey.survey_id).limit(limit)
+            result = (await self.db.execute(query)).scalars().all()
+
+        # 4. COLD START (Если рекомендаций нет или юзер новичок)
+        # Просто берем любые активные опросы, которые он еще не проходил
+        if not result:
+            popular_query = (
+                select(Survey)
+                .where(Survey.status == SurveyStatus.active)
+                .options(selectinload(Survey.tags))
+                .limit(limit)
+            )
+            
+            if taken_ids_list:
+                popular_query = popular_query.where(Survey.survey_id.not_in(taken_ids_list))
+            
+            # Можно добавить сортировку по кол-ву ответов, если нужно
+            # popular_query = popular_query.order_by(...) 
+            
+            result = (await self.db.execute(popular_query)).scalars().all()
+
+        return result

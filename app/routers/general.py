@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_optional_user, get_current_user
 from app.models import User, SurveyStatus
-from app.services.survey import SurveyService # Импорт
+from app.services.survey import SurveyService, User
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -21,12 +21,37 @@ async def read_root(
     user: Optional[User] = Depends(get_optional_user),
     service: SurveyService = Depends(get_survey_service)
 ) -> HTMLResponse:
-    surveys = await service.get_active_surveys()
+    # Получаем все публичные опросы
+    all_surveys = await service.get_public_surveys()
+    
+    # Получаем рекомендации (если юзер есть)
+    recommendations = []
+    rec_ids = set()
+    
+    if user:
+        recommendations = await service.get_recommendations(user.user_id)
+        rec_ids = {s.survey_id for s in recommendations}
+
+    # РАЗДЕЛЯЕМ ОПРОСЫ НА СПИСКИ
+    # Активные (исключая те, что уже в рекомендациях)
+    active_surveys = [
+        s for s in all_surveys 
+        if s.status == SurveyStatus.active and s.survey_id not in rec_ids
+    ]
+    
+    # Завершенные (архив) - их в рекомендациях быть не должно, но на всякий случай фильтруем
+    completed_surveys = [
+        s for s in all_surveys 
+        if s.status in [SurveyStatus.completed, SurveyStatus.archived]
+    ]
+
     return templates.TemplateResponse(
         request=request,
         name="index.html", 
         context={
-            "surveys": surveys,
+            "active_surveys": active_surveys,
+            "completed_surveys": completed_surveys,
+            "recommendations": recommendations,
             "user": user
         }
     )
@@ -38,8 +63,7 @@ async def take_survey_page(
     user: Optional[User] = Depends(get_optional_user),
     service: SurveyService = Depends(get_survey_service)
 ):
-    user_id = user.user_id if user else None
-    survey, user_response, existing_answers = await service.get_survey_details(survey_id, user_id)
+    survey, user_response, existing_answers = await service.get_survey_details(survey_id, user)
     
     if not survey:
         raise HTTPException(status_code=404, detail="Опрос не найден")

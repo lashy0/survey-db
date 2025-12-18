@@ -29,8 +29,48 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         <!-- Динамика (Line Chart) -->
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <h3 class="text-lg font-bold text-gray-800 mb-4">Активность (ответы по дням)</h3>
-            <div id="chart-timeline" class="w-full h-80"></div>
+            <!-- Шапка: Заголовок + Контролы -->
+            <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 gap-4">
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2 whitespace-nowrap">
+                    Активность
+                    <!-- Спиннер -->
+                    <svg id="activity-loader" class="htmx-indicator w-5 h-5 text-blue-600 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </h3>
+                
+                <!-- Форма фильтрации -->
+                <form hx-get="/admin/analytics/activity" 
+                      hx-target="#activity-wrapper" 
+                      hx-indicator="#activity-loader"
+                      class="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+                    
+                    <div class="relative group">
+                        <input type="date" name="start_date" 
+                               class="bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full pl-2 pr-2 py-1.5 cursor-pointer hover:bg-white transition">
+                        <div class="absolute -top-3 left-1 bg-white px-1 text-[10px] text-gray-400">От</div>
+                    </div>
+
+                    <div class="relative group">
+                        <input type="date" name="end_date" 
+                               class="bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full pl-2 pr-2 py-1.5 cursor-pointer hover:bg-white transition">
+                        <div class="absolute -top-3 left-1 bg-white px-1 text-[10px] text-gray-400">До</div>
+                    </div>
+
+                    <button type="submit" 
+                            class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-sm flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+                        Фильтр
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Контейнер для графика -->
+            <div id="activity-wrapper">
+                <!-- Начальная загрузка (include) -->
+                {% include "admin/partials/activity_chart.html" %}
+            </div>
         </div>
 
         <!-- Воронка (Bar/Funnel) -->
@@ -101,7 +141,7 @@
     </div>
 
     <!-- Аномалии (Table) -->
-    <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
+    <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col mb-8">
         <!-- Шапка с фильтром -->
         <div class="p-6 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white z-20">
             <div>
@@ -157,34 +197,7 @@
         color: '#4b5563'
     };
 
-    // 1. Time Series
-    const timeData = {
-        x: {{ time_series_data.dates | tojson }},
-        y: {{ time_series_data.counts | tojson }},
-        type: 'scatter',
-        mode: 'lines+markers',
-        line: {shape: 'spline', color: '#2563eb'},
-        fill: 'tozeroy',
-        hovertemplate: '<b>%{x}</b><br>Ответов: %{y}<extra></extra>'
-    };
-    Plotly.newPlot('chart-timeline', [timeData], {
-        margin: {t: 10, l: 30, r: 10, b: 30},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        xaxis: { 
-            automargin: true, 
-            tickfont: fontConfig,
-            tickformat: '%d.%m' // Формат даты
-        },
-        yaxis: { 
-            automargin: true, 
-            tickfont: fontConfig,
-            gridcolor: '#e5e7eb'
-        }
-    }, {displayModeBar: false, responsive: true});
-
-    // 2. Funnel
-    // ОБРАТИТЕ ВНИМАНИЕ: funnel_data.counts вместо .values
+    // Funnel
     const funnelData = {
         x: {{ funnel_data.labels | tojson }},
         y: {{ funnel_data.counts | tojson }}, 
@@ -205,7 +218,7 @@
         yaxis: { automargin: true, tickfont: fontConfig, gridcolor: '#e5e7eb' }
     }, {displayModeBar: false, responsive: true});
 
-    // 3. Tags
+    // Tags
     const tagsData = {
         labels: {{ tags_data.labels | tojson }},
         values: {{ tags_data.counts | tojson }},
@@ -217,7 +230,7 @@
         textinfo: 'label+percent',
         textposition: 'outside',
         automargin: true,
-        hovertemplate: 'Возраст: <b>%{x}</b><br>Ответов: %{y}<extra></extra>'
+        hovertemplate: 'Тег: <b>%{label}</b><br>Ответов: %{value}<extra></extra>'
     };
     Plotly.newPlot('chart-tags', [tagsData], {
         margin: {t: 0, l: 0, r: 0, b: 0},
@@ -225,7 +238,7 @@
         paper_bgcolor: 'rgba(0,0,0,0)',
     }, {displayModeBar: false, responsive: true});
 
-    // 5. Демография
+    // Демография
     const demographicsData = {
         x: {{ demographics.labels | tojson }},
         y: {{ demographics.counts | tojson }},
@@ -271,6 +284,19 @@
     }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover {
         background-color: #94a3b8;
+    }
+
+    /* По умолчанию скрываем спиннер и пропускаем клики сквозь него */
+    .htmx-indicator {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 200ms ease-in;
+    }
+    /* Когда HTMX добавляет класс htmx-request, показываем спиннер и блокируем клики */
+    .htmx-request .htmx-indicator,
+    .htmx-request.htmx-indicator {
+        opacity: 1;
+        pointer-events: auto;
     }
 </style>
 {% endblock %}
