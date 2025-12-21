@@ -13,13 +13,13 @@ def create_app() -> FastAPI:
         FastAPI: Configured application instance.
     """
     app_instance = FastAPI(
-        title="SurveyPlatform",
+        title="Опрос",
         description="A course project for analyzing survey data.",
         version="1.0.0"
     )
 
     # Mount static files (if you have CSS/JS files locally)
-    # app_instance.mount("/static", StaticFiles(directory="static"), name="static")
+    app_instance.mount("/static", StaticFiles(directory="app/static"), name="static")
 
     # Middleware
     app_instance.add_middleware(CsrfMiddleware)

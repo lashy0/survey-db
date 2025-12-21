@@ -1,6 +1,7 @@
 from typing import Optional
+from pathlib import Path
 from fastapi import APIRouter, Depends, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -103,3 +104,11 @@ async def submit_survey(
         url=f"/surveys/{survey_id}?msg=saved", 
         status_code=303
     )
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    favicon_path = Path("app") / "static" / "favicon.ico"
+    if not favicon_path.exists():
+        return Response(status_code=404)
+        
+    return FileResponse(favicon_path)
