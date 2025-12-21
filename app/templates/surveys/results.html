@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-5xl mx-auto py-8">
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Результаты: {{ survey.title }}</h1>
+            <p class="text-gray-500 mt-1">Детальная аналитика по ответам</p>
+        </div>
+        <a href="/" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Назад</a>
+    </div>
+
+    <div class="space-y-8">
+        {% for q in questions_stats %}
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h3 class="text-xl font-bold text-gray-800 mb-4 border-b border-gray-100 pb-2">
+                {{ loop.index }}. {{ q.text }}
+                <span class="text-sm font-normal text-gray-400 ml-2">({{ q.type }})</span>
+            </h3>
+
+            {% if q.type in ['single_choice', 'multiple_choice', 'rating'] %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <!-- График -->
+                    <div id="chart-q-{{ q.id }}" class="h-64 w-full"></div>
+                    
+                    <!-- Таблица данных + Возраст -->
+                    <div>
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-gray-500 bg-gray-50 uppercase text-xs">
+                                <tr>
+                                    <th class="px-3 py-2">Вариант</th>
+                                    <th class="px-3 py-2 text-right">Ответов</th>
+                                    <th class="px-3 py-2 text-right">%</th>
+                                    <th class="px-3 py-2 text-right text-purple-600" title="Средний возраст выбравших">Ср. Возраст</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                {% for label in q.data.labels %}
+                                <tr>
+                                    <td class="px-3 py-2 font-medium">{{ label }}</td>
+                                    <td class="px-3 py-2 text-right">{{ q.data.counts[loop.index0] }}</td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ q.data.percentages[loop.index0] }}%</td>
+                                    <td class="px-3 py-2 text-right font-bold text-purple-600">
+                                        {{ q.data.avg_ages[loop.index0] or '-' }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Инициализация графика -->
+                <script>
+                    (function(){
+                        // Подготовка данных
+                        const rawLabels = {{ q.data.labels | tojson }};
+                        const counts = {{ q.data.counts | tojson }};
+                        
+                        // Уменьшаем maxLen для более частого переноса (было 30 -> стало 25)
+                        function wrapText(text, maxLen = 25) {
+                            if (!text || text.length <= maxLen) return text;
+                            const words = text.split(' ');
+                            let line = '';
+                            let result = '';
+                            for (let w of words) {
+                                if ((line + w).length > maxLen) {
+                                    result += line.trim() + '<br>';
+                                    line = '';
+                                }
+                                line += w + ' ';
+                            }
+                            return result + line.trim();
+                        }
+                        
+                        const wrappedLabels = rawLabels.map(l => wrapText(l));
+
+                        const data = [{
+                            x: counts,
+                            y: wrappedLabels,
+                            type: 'bar',
+                            orientation: 'h', 
+                            marker: { color: '#3b82f6' },
+                            text: counts.map(String),
+                            textposition: 'auto',
+                            hovertemplate: '<b>%{y}</b><br>Ответов: %{x}<extra></extra>'
+                        }];
+                        
+                        // Увеличим множитель высоты, так как строк стало больше из-за <br>
+                        const dynamicHeight = Math.max(250, rawLabels.length * 60 + 50);
+
+                        const layout = {
+                            margin: {
+                                t: 10, 
+                                l: 160, // УВЕЛИЧИЛИ ОТСТУП СЛЕВА
+                                r: 20, 
+                                b: 30
+                            },
+                            height: dynamicHeight,
+                            yaxis: {
+                                automargin: false, // Жесткий отступ
+                                tickfont: {
+                                    family: 'ui-sans-serif, system-ui, sans-serif',
+                                    size: 11, // Компактный шрифт
+                                    color: '#374151'
+                                },
+                            },
+                            xaxis: {
+                                automargin: true,
+                                tickfont: { size: 10, color: '#9ca3af' },
+                                gridcolor: '#f3f4f6',
+                                zeroline: false
+                            },
+                            paper_bgcolor: 'rgba(0,0,0,0)',
+                            plot_bgcolor: 'rgba(0,0,0,0)'
+                        };
+
+                        document.getElementById('chart-q-{{ q.id }}').style.height = dynamicHeight + 'px';
+                        Plotly.newPlot('chart-q-{{ q.id }}', data, layout, {displayModeBar: false, responsive: true});
+                    })();
+                </script>
+
+            {% elif q.type == 'text_answer' %}
+                <div class="bg-gray-50 rounded-xl p-4 h-[300px] overflow-y-auto custom-scrollbar border border-gray-200">
+                    {% if q.data %}
+                        <div class="space-y-3">
+                            {% for item in q.data %}
+                            <div class="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
+                                <p class="text-gray-800 text-sm leading-relaxed">
+                                    "{{ item.text }}"
+                                </p>
+                                <p class="text-xs text-gray-400 mt-2 text-right">
+                                    {{ item.date.strftime('%d.%m.%Y %H:%M') }}
+                                </p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="flex items-center justify-center h-full text-gray-400">
+                            Нет текстовых ответов.
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

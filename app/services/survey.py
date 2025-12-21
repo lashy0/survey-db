@@ -2,7 +2,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any, Union
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, extract, desc
 from sqlalchemy.orm import selectinload
 
 from app.models import (
@@ -355,3 +355,86 @@ class SurveyService:
             result = (await self.db.execute(popular_query)).scalars().all()
 
         return result
+    
+    async def get_survey_analytics(self, survey_id: int):
+        """
+        Собирает детальную статистику по каждому вопросу опроса.
+        """
+        # 1. Загружаем сам опрос с вопросами и опциями
+        survey = await self.db.get(Survey, survey_id)
+        if not survey: return None
+        
+        # Подгружаем вопросы, чтобы знать их текст и тип
+        q_query = select(Question).where(Question.survey_id == survey_id).order_by(Question.position).options(selectinload(Question.options))
+        questions = (await self.db.execute(q_query)).scalars().all()
+        
+        analytics = []
+        
+        for q in questions:
+            q_stats = {
+                "id": q.question_id,
+                "text": q.question_text,
+                "type": q.question_type,
+                "total_answers": 0,
+                "data": None
+            }
+            
+            # А. Для вопросов с выбором (Single/Multiple/Rating)
+            if q.question_type in [QuestionType.single_choice, QuestionType.multiple_choice, QuestionType.rating]:
+                # Считаем кол-во выборов для каждого варианта
+                stats_query = (
+                    select(Option.option_text, func.count(UserAnswer.answer_id).label('cnt'))
+                    .join(UserAnswer, Option.option_id == UserAnswer.selected_option_id)
+                    .where(Option.question_id == q.question_id)
+                    .group_by(Option.option_text)
+                    .order_by(desc('cnt'))
+                )
+                res = (await self.db.execute(stats_query)).all()
+                
+                labels = [row.option_text for row in res]
+                counts = [row.cnt for row in res]
+                total = sum(counts)
+                
+                q_stats["total_answers"] = total
+                q_stats["data"] = {
+                    "labels": labels,
+                    "counts": counts,
+                    "percentages": [round(c/total*100, 1) if total else 0 for c in counts]
+                }
+                
+                # Доп. фича: Средний возраст для каждого варианта ответа (Инсайт!)
+                # "Кто выбирает вариант А? Молодежь или старики?"
+                age_query = (
+                    select(
+                        Option.option_text, 
+                        func.avg(extract('year', func.age(User.birth_date))).label('avg_age')
+                    )
+                    .join(UserAnswer, Option.option_id == UserAnswer.selected_option_id)
+                    .join(SurveyResponse, UserAnswer.response_id == SurveyResponse.response_id)
+                    .join(User, SurveyResponse.user_id == User.user_id)
+                    .where(Option.question_id == q.question_id)
+                    .group_by(Option.option_text)
+                )
+                age_res = (await self.db.execute(age_query)).all()
+                # Превращаем в словарь {Вариант: СреднийВозраст}
+                age_map = {row.option_text: round(row.avg_age or 0, 1) for row in age_res}
+                q_stats["data"]["avg_ages"] = [age_map.get(lbl, 0) for lbl in labels]
+
+            # Б. Для текстовых вопросов
+            elif q.question_type == QuestionType.text_answer:
+                text_query = (
+                    select(UserAnswer.text_answer, SurveyResponse.completed_at) # Добавили дату
+                    .join(SurveyResponse, UserAnswer.response_id == SurveyResponse.response_id)
+                    .where(UserAnswer.question_id == q.question_id, UserAnswer.text_answer.is_not(None))
+                    .order_by(SurveyResponse.completed_at.desc())
+                    .limit(50) # Увеличим лимит
+                )
+                res = (await self.db.execute(text_query)).all() # .all() вместо .scalars().all() т.к. два поля
+                
+                q_stats["total_answers"] = len(res)
+                # Преобразуем в список словарей для удобства в шаблоне
+                q_stats["data"] = [{"text": r.text_answer, "date": r.completed_at} for r in res]
+
+            analytics.append(q_stats)
+            
+        return {"survey": survey, "questions": analytics}

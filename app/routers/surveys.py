@@ -11,7 +11,7 @@ from app.core.deps import get_current_user
 from app.models import User
 from app.schemas import SurveyCreateForm
 from app.core.utils import parse_form_data
-from app.services.survey import SurveyService
+from app.services.survey import SurveyService, UserRole
 
 router = APIRouter(prefix="/surveys", tags=["surveys"])
 templates = Jinja2Templates(directory="app/templates")
@@ -111,3 +111,30 @@ async def delete_survey(
     
     content += history_html
     return HTMLResponse(content=content, status_code=200, headers={"HX-Trigger": json.dumps({"showToast": "Опрос удален"})})
+
+@router.get("/{survey_id}/results", response_class=HTMLResponse)
+async def view_survey_results(
+    survey_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    service: SurveyService = Depends(get_survey_service)
+):
+    # Получаем данные
+    data = await service.get_survey_analytics(survey_id)
+    
+    if not data:
+        raise HTTPException(status_code=404, detail="Опрос не найден")
+        
+    # Проверка прав: Автор или Админ
+    if user.role != UserRole.admin and data['survey'].author_id != user.user_id:
+        raise HTTPException(status_code=403, detail="Нет доступа к результатам")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="surveys/results.html",
+        context={
+            "user": user,
+            "survey": data['survey'],
+            "questions_stats": data['questions']
+        }
+    )
