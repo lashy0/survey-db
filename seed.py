@@ -322,31 +322,25 @@ def create_single_response(user_id, survey, user_reg_date):
         questions_to_answer = survey.questions[:limit]
 
     for q in questions_to_answer:
-        ans = UserAnswer(question_id=q.question_id)
-        if q.question_type == QuestionType.text_answer:
-            # Более осмысленные фейковые ответы (просто заглушка, но лучше чем рандомные буквы)
-            ans.text_answer = fake.sentence(nb_words=6)
-        elif q.options:
-            if q.question_type == QuestionType.multiple_choice:
-                # Выбираем 1 или 2 опции
-                opts = random.sample(q.options, k=random.randint(1, min(2, len(q.options))))
-                # Технически модель UserAnswer хранит 1 option_id, для multiple нужно несколько строк UserAnswer
-                # Но наш сидер упрощен: берем первую (для аналитики пойдет) или нужно переделывать логику
-                # У нас связь UserAnswer -> selected_option_id (один к одному в строке).
-                # Поэтому для мульти-выбора надо создавать НЕСКОЛЬКО UserAnswer.
-                # Сделаем правильно:
-                pass # Логика ниже
-            else:
-                # Single choice / Rating
-                ans.selected_option_id = random.choice(q.options).option_id
-                user_answers.append(ans)
-        
-        # Специальная обработка Multiple Choice (создаем несколько ответов)
+        # 1. Обработка Multiple Choice (галочки)
         if q.question_type == QuestionType.multiple_choice and q.options:
              opts = random.sample(q.options, k=random.randint(1, min(3, len(q.options))))
              for opt in opts:
                  multi_ans = UserAnswer(question_id=q.question_id, selected_option_id=opt.option_id)
                  user_answers.append(multi_ans)
+             continue # Переходим к следующему вопросу
+
+        # 2. Обработка остальных типов (Single, Rating, Text)
+        ans = UserAnswer(question_id=q.question_id)
+        
+        if q.question_type == QuestionType.text_answer:
+            ans.text_answer = fake.sentence(nb_words=random.randint(5, 15))
+            user_answers.append(ans) # <--- ВОТ ЭТОЙ СТРОЧКИ НЕ ХВАТАЛО!
+            
+        elif q.options:
+            # Single choice / Rating
+            ans.selected_option_id = random.choice(q.options).option_id
+            user_answers.append(ans)
 
     response.answers = user_answers
     return response
