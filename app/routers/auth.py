@@ -159,3 +159,10 @@ async def logout():
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
     return response
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="auth/forgot_password.html"
+    )
