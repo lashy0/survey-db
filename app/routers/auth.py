@@ -42,7 +42,7 @@ def create_login_response(user_email: str) -> RedirectResponse:
         httponly=True,
         max_age=int(access_expires.total_seconds()),
         samesite="lax",
-        secure=False 
+        secure=True 
     )
     
     # Кука 2: Refresh (Путь можно ограничить, но для Middleware проще оставить глобальным)
@@ -52,7 +52,7 @@ def create_login_response(user_email: str) -> RedirectResponse:
         httponly=True,
         max_age=int(refresh_expires.total_seconds()),
         samesite="lax",
-        secure=False 
+        secure=True 
     )
     
     return response

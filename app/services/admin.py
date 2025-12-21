@@ -3,7 +3,7 @@ from typing import Optional, Dict, List, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import (
     text, inspect, select, func, desc, extract, case,
-    cast, Date, Numeric
+    cast, Date, Numeric, column, table, insert
 )
 from app.core.database import engine
 from app.core.security import get_password_hash
@@ -387,37 +387,47 @@ class AdminService:
         return options_map
 
     async def create_row(self, table_name: str, form_data: dict):
-        def _get_types(c): return {col['name']: col['type'] for col in inspect(c).get_columns(table_name)}
+        pk_col_name = form_data.pop("pk_col_name", None)
+        form_data.pop("csrf_token", None)
+
+        def _get_types(c):
+            return {col['name']: col['type'] for col in inspect(c).get_columns(table_name)}
+        
         async with engine.connect() as conn:
             col_types = await conn.run_sync(_get_types)
-
-        cols = []
+        
         params = {}
         for col, val in form_data.items():
-            if val == "" and col == form_data.get("pk_col_name"): continue
+            if val == "":
+                continue
+
+            if val == "NULL":
+                params[col] = None
+                continue
             
             if ('password' in col or 'hash' in col) and val:
                 val = get_password_hash(val)
             
-            cols.append(f'"{col}"')
-            
-            # Базовое приведение типов
-            if val == "" or val == "NULL":
-                params[col] = None
-            else:
-                col_type = str(col_types.get(col, '')).upper()
-                try:
-                    if 'INT' in col_type: params[col] = int(val)
-                    elif 'BOOL' in col_type: params[col] = (val.lower() == 'true')
-                    elif 'DATE' in col_type: params[col] = datetime.strptime(val, '%Y-%m-%d').date()
-                    else: params[col] = val
-                except:
+            col_type = str(col_types.get(col, '')).upper()
+            try:
+                if 'INT' in col_type:
+                    params[col] = int(val)
+                elif 'BOOL' in col_type:
+                    params[col] = (val.lower() == 'true')
+                elif 'DATE' in col_type:
+                    params[col] = datetime.strptime(val, '%Y-%m-%d').date()
+                else:
                     params[col] = val
+            except:
+                params[col] = val
 
-        if cols:
-            placeholders = [f":{c.replace('\"', '')}" for c in cols]
-            sql = text(f'INSERT INTO "{table_name}" ({", ".join(cols)}) VALUES ({", ".join(placeholders)})')
-            await self.db.execute(sql, params)
+        if params:
+            columns = [column(name) for name in params.keys()]
+            dynamic_table = table(table_name, *columns)
+            
+            stmt = insert(dynamic_table).values(params)
+            
+            await self.db.execute(stmt)
             await self.db.commit()
 
     async def update_row(self, table_name: str, pk_val: int, form_data: dict):

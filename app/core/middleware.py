@@ -14,7 +14,6 @@ async def refresh_token_middleware(request: Request, call_next):
     """
     access_token = request.cookies.get("access_token")
     refresh_token = request.cookies.get("refresh_token")
-    
     new_access_token = None
     
     # Check if access token needs refresh
@@ -42,7 +41,7 @@ async def refresh_token_middleware(request: Request, call_next):
                     expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
                 )
                 # Inject new token into request for dependencies
-                request.cookies["access_token"] = new_access_token
+                request.scope["cookies"]["access_token"] = new_access_token
                 # Also update headers for safety (some libs check headers)
                 # Note: modifying headers is tricky in ASGI, but cookies dict update is enough for FastAPI
         except jwt.PyJWTError:
@@ -58,7 +57,7 @@ async def refresh_token_middleware(request: Request, call_next):
             httponly=True,
             max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             samesite="lax",
-            secure=False
+            secure=True
         )
 
     return response
