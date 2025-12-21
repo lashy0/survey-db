@@ -7,7 +7,10 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=False,  # Set to False in production to reduce log noise
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=0,
+    pool_timeout=10
 )
 
 # Factory for creating new database sessions

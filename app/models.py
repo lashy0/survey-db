@@ -324,6 +324,20 @@ class UserAnswer(Base):
             name="check_answer_content"
         ),
         Index('idx_answers_analytics', 'question_id', 'selected_option_id'),
+
+        Index(
+            'idx_unique_text_answer',
+            'response_id', 'question_id',
+            unique=True,
+            postgresql_where=text("text_answer IS NOT NULL")
+        ),
+
+        Index(
+            'idx_unique_selected_option',
+            'response_id', 'question_id', 'selected_option_id',
+            unique=True,
+            postgresql_where=text("selected_option_id IS NOT NULL")
+        ),
     )
 
     answer_id: Mapped[int] = mapped_column(primary_key=True)
