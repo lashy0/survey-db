@@ -91,7 +91,7 @@ async def register_user(
     new_user = User(
         email=email,
         password_hash=get_password_hash(password),
-        first_name=full_name, # Используем full_name как first_name пока что
+        full_name=full_name,
         birth_date=None, 
         country_id=1 
     )
