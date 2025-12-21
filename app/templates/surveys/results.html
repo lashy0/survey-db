@@ -100,7 +100,7 @@
                                 automargin: false, // Жесткий отступ
                                 tickfont: {
                                     family: 'ui-sans-serif, system-ui, sans-serif',
-                                    size: 11, // Компактный шрифт
+                                    size: 12, // Компактный шрифт
                                     color: '#374151'
                                 },
                             },
@@ -129,7 +129,11 @@
                                     "{{ item.text }}"
                                 </p>
                                 <p class="text-xs text-gray-400 mt-2 text-right">
-                                    {{ item.date.strftime('%d.%m.%Y %H:%M') }}
+                                    {% if item.date %}
+                                        {{ item.date.strftime('%d.%m.%Y %H:%M') }}
+                                    {% else %}
+                                        Дата не указана
+                                    {% endif %}
                                 </p>
                             </div>
                             {% endfor %}

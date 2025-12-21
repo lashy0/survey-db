@@ -190,24 +190,19 @@ class SurveyService:
         
         for question in survey.questions:
             form_key = f"q_{question.question_id}"
-            
-            # Извлекаем данные (учитываем, что multiple_choice - это список)
             if question.question_type == QuestionType.multiple_choice:
                 raw_values = form_data.getlist(form_key)
             else:
                 val = form_data.get(form_key)
                 raw_values = [val] if val else []
 
-            # Чистим от пустых строк
             raw_values = [v for v in raw_values if v is not None and str(v).strip() != ""]
 
-            # Проверка обязательности
             if question.is_required and not raw_values:
                 raise HTTPException(status_code=400, detail=f"Вопрос '{question.question_text}' обязателен")
-
+            
             if not raw_values: continue
 
-            # Проверка валидности значений
             valid_values = []
             if question.question_type in [QuestionType.single_choice, QuestionType.multiple_choice, QuestionType.rating]:
                 valid_ids = {str(opt.option_id) for opt in question.options}
@@ -215,11 +210,10 @@ class SurveyService:
                     if val not in valid_ids:
                         raise HTTPException(status_code=400, detail=f"Некорректный вариант для '{question.question_text}'")
                     valid_values.append(int(val))
-            
             elif question.question_type == QuestionType.text_answer:
                 text_val = str(raw_values[0]).strip()
                 if len(text_val) > 5000:
-                    raise HTTPException(status_code=400, detail=f"Ответ на вопрос '{question.question_text}' слишком длинный")
+                    raise HTTPException(status_code=400, detail=f"Ответ слишком длинный")
                 valid_values.append(text_val)
 
             cleaned_data[question.question_id] = {
@@ -229,68 +223,37 @@ class SurveyService:
 
         # --- СОХРАНЕНИЕ ---
         # Получаем/Создаем сессию
-        query = (
-            select(SurveyResponse)
-            .where(SurveyResponse.survey_id == survey_id, SurveyResponse.user_id == user.user_id)
-            .options(selectinload(SurveyResponse.answers))
+        resp_query = select(SurveyResponse).where(
+            SurveyResponse.survey_id == survey_id, 
+            SurveyResponse.user_id == user.user_id
         )
-        response_obj = (await self.db.execute(query)).scalar_one_or_none()
+        response_obj = (await self.db.execute(resp_query)).scalar_one_or_none()
         
         if not response_obj:
             response_obj = SurveyResponse(
-                survey_id=survey_id, user_id=user.user_id,
+                survey_id=survey_id, 
+                user_id=user.user_id,
                 started_at=datetime.now(timezone.utc),
-                ip_address=client_host, device_type="Web"
+                ip_address=client_host, 
+                device_type="Web"
             )
             self.db.add(response_obj)
             await self.db.flush()
-
+        else:
+            await self.db.execute(
+                delete(UserAnswer).where(UserAnswer.response_id == response_obj.response_id)
+            )
+        
         response_obj.completed_at = datetime.now(timezone.utc)
 
-        # Сохранение ответов
-        for q_id, data in cleaned_data.items():
-            q_type = data["type"]
-            values = data["values"]
-
-            # Для мульти-выбора: удаляем старые, пишем новые
-            if q_type == QuestionType.multiple_choice:
-                await self.db.execute(delete(UserAnswer).where(
-                    UserAnswer.response_id == response_obj.response_id,
-                    UserAnswer.question_id == q_id
-                ))
-                for val in values:
-                    self.db.add(UserAnswer(response_id=response_obj.response_id, question_id=q_id, selected_option_id=val))
-            
-            else:
-                # Ищем существующий
-                existing_ans = None
-                if response_obj.answers:
-                    for ans in response_obj.answers:
-                        if ans.question_id == q_id:
-                            existing_ans = ans; break
-                
-                if not values:
-                    if existing_ans: await self.db.delete(existing_ans)
-                    continue
-
-                val = values[0]
-                if not existing_ans:
-                    existing_ans = UserAnswer(response_id=response_obj.response_id, question_id=q_id)
-                    self.db.add(existing_ans)
-
-                if q_type == QuestionType.text_answer:
-                    existing_ans.text_answer = val
-                    existing_ans.selected_option_id = None
+        for q_id, info in cleaned_data.items():
+            for val in info["values"]:
+                new_ans = UserAnswer(response_id=response_obj.response_id, question_id=q_id)
+                if info["type"] == QuestionType.text_answer:
+                    new_ans.text_answer = val
                 else:
-                    existing_ans.selected_option_id = val
-                    existing_ans.text_answer = None
-
-        # Очистка сирот (ответов на вопросы, которые перестали быть заполненными)
-        answered_q_ids = set(cleaned_data.keys())
-        if response_obj.answers:
-            for ans in response_obj.answers:
-                if ans.question_id not in answered_q_ids:
-                    await self.db.delete(ans)
+                    new_ans.selected_option_id = val
+                self.db.add(new_ans)
 
         await self.db.commit()
     

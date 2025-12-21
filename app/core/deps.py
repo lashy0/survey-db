@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 import jwt # PyJWT
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 import secrets
 
 from app.core.config import settings
@@ -45,7 +46,11 @@ async def get_current_user(
         raise exception
 
     # Далее поиск в БД без изменений...
-    query = select(User).where(User.email == user_email)
+    query = (
+        select(User)
+        .where(User.email == user_email)
+        .options(selectinload(User.country)) 
+    )
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
