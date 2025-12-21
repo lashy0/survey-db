@@ -21,7 +21,7 @@ async def refresh_token_middleware(request: Request, call_next):
     
     if access_token:
         try:
-            jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM], options={"leeway": 10})
         except jwt.ExpiredSignatureError:
             should_refresh = True
         except jwt.PyJWTError:
@@ -40,10 +40,9 @@ async def refresh_token_middleware(request: Request, call_next):
                     data={"sub": email}, 
                     expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
                 )
-                # Inject new token into request for dependencies
-                request.scope["cookies"]["access_token"] = new_access_token
-                # Also update headers for safety (some libs check headers)
-                # Note: modifying headers is tricky in ASGI, but cookies dict update is enough for FastAPI
+                if not hasattr(request, "_cookies"):
+                    _ = request.cookies
+                request._cookies["access_token"] = new_access_token
         except jwt.PyJWTError:
             pass # Invalid refresh token, do nothing (user will get 401)
 
