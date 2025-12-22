@@ -119,22 +119,20 @@ async def view_survey_results(
     user: User = Depends(get_current_user),
     service: SurveyService = Depends(get_survey_service)
 ):
-    # Получаем данные
     data = await service.get_survey_analytics(survey_id)
-    
     if not data:
         raise HTTPException(status_code=404, detail="Опрос не найден")
         
-    # Проверка прав: Автор или Админ
-    if user.role != UserRole.admin and data['survey'].author_id != user.user_id:
-        raise HTTPException(status_code=403, detail="Нет доступа к результатам")
-
+    # ПОЛУЧАЕМ БЕНЧМАРКИ
+    benchmarks = await service.get_survey_benchmark_data(survey_id)
+    
     return templates.TemplateResponse(
         request=request,
         name="surveys/results.html",
         context={
             "user": user,
             "survey": data['survey'],
-            "questions_stats": data['questions']
+            "questions_stats": data['questions'],
+            "benchmarks": benchmarks # Передаем в шаблон
         }
     )

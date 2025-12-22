@@ -9,6 +9,81 @@
         <a href="/" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Назад</a>
     </div>
 
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <!-- ЛЕВАЯ КАРТОЧКА: Цифры -->
+        <div class="bg-indigo-900 text-white p-6 rounded-2xl shadow-lg relative overflow-hidden">
+            <div class="relative z-10">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-indigo-200 text-xs font-bold uppercase tracking-wider">Сравнение показателей</h3>
+                    <div class="flex gap-4 text-[10px] uppercase font-bold">
+                        <span class="flex items-center gap-1">
+                            <div class="w-2.5 h-2.5 bg-indigo-400 rounded-sm"></div> Вы
+                        </span>
+                        <span class="flex items-center gap-1">
+                            <div class="w-0.5 h-2.5 bg-indigo-300 shadow-[0_0_3px_white]"></div> Рынок (Среднее)
+                        </span>
+                    </div>
+                </div>
+                
+                    
+                <div class="space-y-6">
+                    {% for b in benchmarks %}
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <span class="text-sm font-medium text-indigo-100">{{ b.metric_name }}</span>
+                            <div class="text-right">
+                                <span class="text-lg font-bold text-white">{{ b.survey_value | round(1) }}</span>
+                                <span class="text-indigo-300 text-xs ml-1">/ {{ b.category_avg | round(1) }}</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Контейнер полоски -->
+                        <div class="relative w-full bg-white/10 rounded-full h-3 border border-white/5 flex items-center">
+                            
+                            <!-- Вертикальная метка СРЕДНЕГО (Рынок) ровно посередине -->
+                            <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-indigo-300 z-20 shadow-[0_0_5px_white]">
+                                <!-- Подпись над меткой (необязательно) -->
+                                <span class="absolute -top-4 left-1/2 -translate-x-1/2 text-[8px] text-indigo-300 font-bold uppercase">Avg</span>
+                            </div>
+
+                            {# Рассчитываем ширину вашей полоски #}
+                            {% set raw_pct = (b.survey_value / (b.category_avg + 0.001) * 50) %}
+                            {% set pct = raw_pct if raw_pct < 100 else 100 %}
+                            
+                            <!-- Ваша полоска -->
+                            <div class="bg-gradient-to-r from-indigo-500 to-indigo-300 h-full rounded-full transition-all duration-1000 relative z-10" 
+                                style="width: {{ pct }}%">
+                                <!-- Блик для красоты -->
+                                <div class="absolute inset-0 bg-white/20 w-full h-0.5 top-0.5 rounded-full"></div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ПРАВАЯ КАРТОЧКА: Контекст -->
+        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center">
+            <h4 class="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">Контекст анализа</h4>
+            <p class="text-gray-700 leading-relaxed">
+                Мы сравнили ваш опрос с другими похожими анкетами по тегам:
+            </p>
+            <div class="flex flex-wrap gap-2 mt-3 mb-4">
+                {% for tag in survey.tags %}
+                <span class="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-xs font-bold border border-indigo-100">
+                    #{{ tag.name }}
+                </span>
+                {% endfor %}
+            </div>
+            <p class="text-sm text-gray-500 italic">
+                Данные «Рынка» — это усредненные показатели всех активных опросов, у которых есть хотя бы один из этих тегов.
+            </p>
+        </div>
+    </div>
+
+  
+
     <div class="space-y-8">
         {% for q in questions_stats %}
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">

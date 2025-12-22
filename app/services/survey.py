@@ -295,8 +295,13 @@ class SurveyService:
         """
         Собирает детальную статистику по каждому вопросу опроса.
         """
-        # 1. Загружаем сам опрос с вопросами и опциями
-        survey = await self.db.get(Survey, survey_id)
+        query = (
+            select(Survey)
+            .where(Survey.survey_id == survey_id)
+            .options(selectinload(Survey.tags))
+        )
+        survey = (await self.db.execute(query)).scalar_one_or_none()
+        
         if not survey: return None
         
         # Подгружаем вопросы, чтобы знать их текст и тип
@@ -400,3 +405,18 @@ class SurveyService:
         # Сортируем в Python, чтобы сохранить порядок релевантности из SQL
         id_map = {id_: i for i, id_ in enumerate(ids)}
         return sorted(surveys, key=lambda s: id_map.get(s.survey_id))
+    
+    async def get_survey_benchmark_data(self, survey_id: int):
+        """Получает сравнение опроса с бенчмарками категории через SQL."""
+        query = text("SELECT metric_name, survey_value, category_avg FROM get_survey_benchmark(:id)")
+        res = await self.db.execute(query, {"id": survey_id})
+        
+        # Принудительно конвертируем Decimal в float для совместимости с шаблонами
+        final_data = []
+        for r in res.mappings().all():
+            final_data.append({
+                "metric_name": r["metric_name"],
+                "survey_value": float(r["survey_value"] or 0),
+                "category_avg": float(r["category_avg"] or 0)
+            })
+        return final_data
