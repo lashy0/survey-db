@@ -52,31 +52,19 @@ class AdminService:
         )
         heatmap_rows = heatmap_res.all()
 
-        # Возрастная группа
-        age_val = extract('year', func.age(User.birth_date))
-
-        age_case = case(
-            (age_val < 18, 'До 18'),
-            (age_val.between(18, 24), '18-24'),
-            (age_val.between(25, 34), '25-34'),
-            (age_val.between(35, 44), '35-44'),
-            (age_val >= 45, '45+'),
-            else_='Не указано'
-        ).label("age_group")
-
-        demographics_res = await self.db.execute(
-            select(
-                age_case, 
-                func.count(SurveyResponse.response_id).label("cnt")
-            )
-            .select_from(SurveyResponse)
-            .join(User, SurveyResponse.user_id == User.user_id)
-            .where(SurveyResponse.completed_at.is_not(None)) # Только завершенные
-            .group_by(age_case)
-            .order_by(age_case)
-        )
+        # Демография (теперь через простую View)
+        demographics_res = await self.db.execute(text("""
+            SELECT 
+                vd.age_group, 
+                COUNT(sr.response_id) as cnt
+            FROM survey_responses sr
+            JOIN v_user_demographics vd ON sr.user_id = vd.user_id
+            WHERE sr.completed_at IS NOT NULL
+            GROUP BY vd.age_group
+        """))
         demographics_rows = demographics_res.all()
 
+        # Сортировка для графика (чтобы группы шли по порядку: 18, 25, 35...)
         sort_order = {'До 18': 1, '18-24': 2, '25-34': 3, '35-44': 4, '45+': 5, 'Не указано': 6}
         sorted_demo = sorted(demographics_rows, key=lambda x: sort_order.get(x.age_group, 99))
 
@@ -124,50 +112,44 @@ class AdminService:
     async def get_heatmap_stats(self, period: str = "all") -> Dict[str, Any]:
         """
         Получает данные для тепловой карты с учетом фильтра по времени.
-        period: '7d', '30d', 'year', 'all'
+        period: '7d', '30d', 'year'
         """
-        # 1. Формируем условие фильтрации
-        where_clause = SurveyResponse.started_at.is_not(None) # Базовое условие
+        sql = """
+            SELECT day_of_week, hour_of_day, COUNT(*) as cnt
+            FROM v_activity_time_slots
+        """
         
-        if period == '7d':
-            # За последние 7 дней
-            where_clause = (SurveyResponse.started_at >= func.now() - text("INTERVAL '7 days'"))
-        elif period == '30d':
-            # За последние 30 дней
-            where_clause = (SurveyResponse.started_at >= func.now() - text("INTERVAL '30 days'"))
-        elif period == 'year':
-             # С начала текущего года
-            where_clause = (extract('year', SurveyResponse.started_at) == extract('year', func.now()))
-        
-        # 2. Запрос
-        heatmap_res = await self.db.execute(
-            select(
-                extract('isodow', SurveyResponse.started_at).label("dow"),
-                extract('hour', SurveyResponse.started_at).label("hour"),
-                func.count(SurveyResponse.response_id).label("cnt")
-            )
-            .where(where_clause) # <--- Применяем фильтр
-            .group_by("dow", "hour")
-        )
-        heatmap_rows = heatmap_res.all()
+        conditions = []
 
-        # 3. Формирование матрицы Z (7 дней * 24 часа)
+        if period == '7d':
+            conditions.append("full_timestamp >= NOW() - INTERVAL '7 days'")
+        elif period == '30d':
+            conditions.append("full_timestamp >= NOW() - INTERVAL '30 days'")
+        elif period == 'year':
+            # Текущий календарный год (с 1 января)
+            conditions.append("EXTRACT(YEAR FROM full_timestamp) = EXTRACT(YEAR FROM NOW())")
+            
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        
+        sql += " GROUP BY day_of_week, hour_of_day"
+    
+        res = await self.db.execute(text(sql))
+        rows = res.all()
+
+        # 3. Наполнение матрицы (остается без изменений)
         heatmap_z = [[0 for _ in range(24)] for _ in range(7)]
-        total_hits = 0 # Для отладки или заголовка
-        
-        for row in heatmap_rows:
-            d = int(row.dow) - 1 # isodow: 1=Monday -> index 0
-            h = int(row.hour)
-            if 0 <= d < 7 and 0 <= h < 24:
-                heatmap_z[d][h] = row.cnt
-                total_hits += row.cnt
-        
+        for row in rows:
+            d_idx = row.day_of_week - 1
+            h_idx = row.hour_of_day
+            if 0 <= d_idx < 7 and 0 <= h_idx < 24:
+                heatmap_z[d_idx][h_idx] = row.cnt
+
         return {
             "z": heatmap_z,
             "x": [f"{h:02d}:00" for h in range(24)],
             "y": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
-            "period": period,
-            "total": total_hits
+            "period": period
         }
 
     async def get_anomalies(self, survey_id: Optional[int] = None):
