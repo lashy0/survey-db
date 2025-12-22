@@ -172,37 +172,27 @@ class AdminService:
 
     async def get_anomalies(self, survey_id: Optional[int] = None):
         """Поиск аномально быстрых прохождений."""
-        stats_cte = (
-            select(
-                SurveyResponse.survey_id,
-                func.avg(extract('epoch', SurveyResponse.duration)).label("avg_sec"),
-                func.stddev(extract('epoch', SurveyResponse.duration)).label("std_sec")
-            )
-            .where(SurveyResponse.duration.is_not(None))
-            .group_by(SurveyResponse.survey_id)
-            .cte("survey_stats")
-        )
-        query = (
-            select(
-                User.full_name,
-                User.email,
-                Survey.title,
-                extract('epoch', SurveyResponse.duration).label("user_sec"),
-                stats_cte.c.avg_sec,
-                stats_cte.c.std_sec
-            )
-            .join(stats_cte, SurveyResponse.survey_id == stats_cte.c.survey_id)
-            .join(User, SurveyResponse.user_id == User.user_id)
-            .join(Survey, SurveyResponse.survey_id == Survey.survey_id)
-            .where(
-                extract('epoch', SurveyResponse.duration) < (stats_cte.c.avg_sec - 1.5 * func.coalesce(stats_cte.c.std_sec, 0))
-            )
-            .order_by("user_sec")
-        )
+        sql = "SELECT * FROM v_anomaly_candidates WHERE speed_ratio < 0.3"
+
+        params = {}
         if survey_id:
-            query = query.where(Survey.survey_id == survey_id)
+            sql += " AND survey_id = :sid"
+            params["sid"] = survey_id
             
-        return (await self.db.execute(query)).all()
+        sql += " ORDER BY speed_ratio ASC LIMIT 50"
+        
+        res = await self.db.execute(text(sql), params)
+
+        anomalies = []
+        for r in res.mappings().all():
+            anomalies.append({
+                "full_name": r["user_name"],
+                "email": r["user_email"],
+                "title": r["survey_title"],
+                "user_sec": r["user_duration_sec"],
+                "avg_sec": r["survey_avg_sec"]
+            })
+        return anomalies
 
     async def get_all_surveys(self):
         return (await self.db.execute(select(Survey).order_by(Survey.title))).scalars().all()
