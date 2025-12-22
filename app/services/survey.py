@@ -322,58 +322,33 @@ class SurveyService:
             # А. Для вопросов с выбором (Single/Multiple/Rating)
             if q.question_type in [QuestionType.single_choice, QuestionType.multiple_choice, QuestionType.rating]:
                 # Считаем кол-во выборов для каждого варианта
-                stats_query = (
-                    select(Option.option_text, func.count(UserAnswer.answer_id).label('cnt'))
-                    .join(UserAnswer, Option.option_id == UserAnswer.selected_option_id)
-                    .where(Option.question_id == q.question_id)
-                    .group_by(Option.option_text)
-                    .order_by(desc('cnt'))
-                )
-                res = (await self.db.execute(stats_query)).all()
+                age_query = text("""
+                    SELECT answer_content, AVG(respondent_age) as avg_age, COUNT(*) as cnt
+                    FROM v_survey_responses_flat
+                    WHERE question_id = :qid
+                    GROUP BY answer_content
+                """)
+                res = await self.db.execute(age_query, {"qid": q.question_id})
+                rows = res.mappings().all()
                 
-                labels = [row.option_text for row in res]
-                counts = [row.cnt for row in res]
-                total = sum(counts)
-                
-                q_stats["total_answers"] = total
+                # Формируем данные для графиков
                 q_stats["data"] = {
-                    "labels": labels,
-                    "counts": counts,
-                    "percentages": [round(c/total*100, 1) if total else 0 for c in counts]
+                    "labels": [r["answer_content"] for r in rows],
+                    "counts": [r["cnt"] for r in rows],
+                    "avg_ages": [round(r["avg_age"] or 0, 1) for r in rows],
+                    "percentages": []
                 }
                 
-                # Доп. фича: Средний возраст для каждого варианта ответа (Инсайт!)
-                # "Кто выбирает вариант А? Молодежь или старики?"
-                age_query = (
-                    select(
-                        Option.option_text, 
-                        func.avg(extract('year', func.age(User.birth_date))).label('avg_age')
-                    )
-                    .join(UserAnswer, Option.option_id == UserAnswer.selected_option_id)
-                    .join(SurveyResponse, UserAnswer.response_id == SurveyResponse.response_id)
-                    .join(User, SurveyResponse.user_id == User.user_id)
-                    .where(Option.question_id == q.question_id)
-                    .group_by(Option.option_text)
-                )
-                age_res = (await self.db.execute(age_query)).all()
-                # Превращаем в словарь {Вариант: СреднийВозраст}
-                age_map = {row.option_text: round(row.avg_age or 0, 1) for row in age_res}
-                q_stats["data"]["avg_ages"] = [age_map.get(lbl, 0) for lbl in labels]
-
-            # Б. Для текстовых вопросов
             elif q.question_type == QuestionType.text_answer:
-                text_query = (
-                    select(UserAnswer.text_answer, SurveyResponse.completed_at) # Добавили дату
-                    .join(SurveyResponse, UserAnswer.response_id == SurveyResponse.response_id)
-                    .where(UserAnswer.question_id == q.question_id, UserAnswer.text_answer.is_not(None))
-                    .order_by(SurveyResponse.completed_at.desc())
-                    .limit(50) # Увеличим лимит
-                )
-                res = (await self.db.execute(text_query)).all() # .all() вместо .scalars().all() т.к. два поля
-                
-                q_stats["total_answers"] = len(res)
-                # Преобразуем в список словарей для удобства в шаблоне
-                q_stats["data"] = [{"text": r.text_answer, "date": r.completed_at} for r in res]
+                # Текстовые ответы теперь тянутся элементарно
+                text_query = text("""
+                    SELECT answer_content as text, completed_at as date
+                    FROM v_survey_responses_flat
+                    WHERE question_id = :qid
+                    ORDER BY completed_at DESC LIMIT 50
+                """)
+                res = await self.db.execute(text_query, {"qid": q.question_id})
+                q_stats["data"] = res.mappings().all()
 
             analytics.append(q_stats)
             
@@ -420,3 +395,19 @@ class SurveyService:
                 "category_avg": float(r["category_avg"] or 0)
             })
         return final_data
+    
+    async def get_survey_export_data(self, survey_id: int):
+        """Получает все ответы опроса из VIEW для экспорта в CSV."""
+        query = text("""
+            SELECT 
+                respondent_name as "Имя респондента",
+                respondent_age as "Возраст",
+                question_text as "Вопрос",
+                answer_content as "Ответ",
+                completed_at as "Дата завершения"
+            FROM v_survey_responses_flat
+            WHERE survey_id = :id
+            ORDER BY completed_at DESC, question_id ASC
+        """)
+        result = await self.db.execute(query, {"id": survey_id})
+        return result

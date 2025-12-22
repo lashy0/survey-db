@@ -1,7 +1,9 @@
 import json
+import io
+import csv
 from typing import Optional
 from fastapi import APIRouter, Depends, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError
@@ -136,3 +138,38 @@ async def view_survey_results(
             "benchmarks": benchmarks # Передаем в шаблон
         }
     )
+
+@router.get("/{survey_id}/export")
+async def export_survey_results(
+    survey_id: int,
+    user: User = Depends(get_current_user),
+    service: SurveyService = Depends(get_survey_service)
+):
+    # 1. Проверка прав (только автор или админ)
+    survey_data = await service.get_survey_details(survey_id, user)
+    if not survey_data[0] or (survey_data[0].author_id != user.user_id and user.role != UserRole.admin):
+        raise HTTPException(status_code=403, detail="Нет доступа к экспорту")
+
+    # 2. Получаем данные
+    db_result = await service.get_survey_export_data(survey_id)
+    
+    # 3. Генерируем CSV в памяти
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Пишем заголовки (ключи из первой строки)
+    columns = db_result.keys()
+    writer.writerow(columns)
+    
+    # Пишем данные
+    for row in db_result:
+        writer.writerow(row)
+
+    # 4. Отдаем файл с правильной кодировкой для Excel (utf-8-sig)
+    response = StreamingResponse(
+        iter([output.getvalue().encode("utf-8-sig")]),
+        media_type="text/csv"
+    )
+    filename = f"results_survey_{survey_id}.csv"
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response

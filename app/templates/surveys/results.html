@@ -6,7 +6,16 @@
             <h1 class="text-3xl font-bold text-gray-800">Результаты: {{ survey.title }}</h1>
             <p class="text-gray-500 mt-1">Детальная аналитика по ответам</p>
         </div>
+        <div class="flex gap-3">
+        <a href="/surveys/{{ survey.survey_id }}/export" 
+        class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-sm font-medium">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Скачать CSV
+        </a>
         <a href="/" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50">Назад</a>
+    </div>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
