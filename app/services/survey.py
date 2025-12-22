@@ -2,7 +2,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any, Union
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, extract, desc
+from sqlalchemy import select, delete, func, extract, desc, text
 from sqlalchemy.orm import selectinload
 
 from app.models import (
@@ -261,63 +261,35 @@ class SurveyService:
         """
         Рекомендательная система (Упрощенная и надежная версия):
         """
-        # 1. Сначала получаем ID опросов, которые юзер УЖЕ прошел
-        # Делаем это отдельным запросом, чтобы избежать проблем с пустыми подзапросами
-        taken_ids_query = select(SurveyResponse.survey_id).where(SurveyResponse.user_id == user_id)
-        taken_ids = (await self.db.execute(taken_ids_query)).scalars().all()
+        rec_query = select(text("*")).select_from(
+            func.get_survey_recommendations(user_id).alias("recs")
+        )
         
-        # Превращаем в список (если пусто, будет просто [])
-        taken_ids_list = list(taken_ids)
+        result = await self.db.execute(rec_query)
+        rows = result.all() # Получим список (survey_id, score)
 
-        # 2. Получаем любимые теги пользователя (на основе прошлых ответов)
-        user_tags_ids = []
-        if taken_ids_list:
-            user_tags_query = (
-                select(survey_tags.c.tag_id)
-                .join(SurveyResponse, SurveyResponse.survey_id == survey_tags.c.survey_id)
-                .where(SurveyResponse.user_id == user_id)
-            )
-            user_tags_ids = (await self.db.execute(user_tags_query)).scalars().all()
-
-        # 3. ПОИСК ПО ТЕГАМ (Content-Based)
-        # Ищем активные опросы с такими же тегами, которые юзер еще НЕ проходил
-        result = []
-        if user_tags_ids:
-            query = (
-                select(Survey)
-                .join(survey_tags, Survey.survey_id == survey_tags.c.survey_id)
-                .where(
-                    Survey.status == SurveyStatus.active,
-                    survey_tags.c.tag_id.in_(user_tags_ids)
-                )
-                .options(selectinload(Survey.tags))
-            )
-            # Фильтр "Не пройденные" добавляем в Python или через условие, если список не пуст
-            if taken_ids_list:
-                query = query.where(Survey.survey_id.not_in(taken_ids_list))
-                
-            query = query.group_by(Survey.survey_id).limit(limit)
-            result = (await self.db.execute(query)).scalars().all()
-
-        # 4. COLD START (Если рекомендаций нет или юзер новичок)
-        # Просто берем любые активные опросы, которые он еще не проходил
-        if not result:
-            popular_query = (
+        if not rows:
+            # Если рекомендаций нет (Cold Start), возвращаем просто популярные опросы
+            fallback_query = (
                 select(Survey)
                 .where(Survey.status == SurveyStatus.active)
                 .options(selectinload(Survey.tags))
                 .limit(limit)
             )
-            
-            if taken_ids_list:
-                popular_query = popular_query.where(Survey.survey_id.not_in(taken_ids_list))
-            
-            # Можно добавить сортировку по кол-ву ответов, если нужно
-            # popular_query = popular_query.order_by(...) 
-            
-            result = (await self.db.execute(popular_query)).scalars().all()
+            return (await self.db.execute(fallback_query)).scalars().all()
 
-        return result
+        # 2. Получаем полные объекты Survey для найденных ID
+        target_ids = [r.survey_id for r in rows[:limit]]
+        
+        final_surveys = (
+            await self.db.execute(
+                select(Survey)
+                .where(Survey.survey_id.in_(target_ids))
+                .options(selectinload(Survey.tags))
+            )
+        ).scalars().all()
+        
+        return final_surveys
     
     async def get_survey_analytics(self, survey_id: int):
         """
@@ -401,3 +373,30 @@ class SurveyService:
             analytics.append(q_stats)
             
         return {"survey": survey, "questions": analytics}
+    
+    async def search_surveys(self, query_str: str) -> List[Survey]:
+        """Умный поиск через SQL функцию."""
+        if not query_str.strip():
+            return await self.get_public_surveys()
+
+        # 1. Вызываем функцию поиска
+        stmt = select(text("survey_id")).select_from(
+            func.search_surveys_ranked(query_str).alias("s")
+        )
+        result = await self.db.execute(stmt)
+        ids = [row[0] for row in result.all()]
+
+        if not ids:
+            return []
+
+        # 2. Подгружаем полные данные для найденных ID
+        final_query = (
+            select(Survey)
+            .where(Survey.survey_id.in_(ids))
+            .options(selectinload(Survey.tags))
+        )
+        surveys = (await self.db.execute(final_query)).scalars().all()
+        
+        # Сортируем в Python, чтобы сохранить порядок релевантности из SQL
+        id_map = {id_: i for i, id_ in enumerate(ids)}
+        return sorted(surveys, key=lambda s: id_map.get(s.survey_id))

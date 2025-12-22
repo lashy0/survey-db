@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     @computed_field
     def database_url(self) -> URL:
+        is_local = self.DB_HOST in ("localhost", "127.0.0.1")
+        ssl_mode = "disable" if is_local else "require"
         # Создаем URL объект, который сам экранирует пароли
         url_object = URL.create(
             drivername="postgresql+asyncpg",
@@ -35,7 +37,7 @@ class Settings(BaseSettings):
             host=self.DB_HOST,
             port=self.DB_PORT,
             database=self.DB_NAME,
-            query={"ssl": "require"},  # Enforce SSL for production/cloud DBs
+            query={"ssl": ssl_mode},  # Enforce SSL for production/cloud DBs
         )
 
         return url_object

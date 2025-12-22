@@ -18,33 +18,23 @@ def get_survey_service(db: AsyncSession = Depends(get_db)) -> SurveyService:
 
 @router.get("/", response_class=HTMLResponse)
 async def read_root(
-    request: Request, 
+    request: Request,
+    q: Optional[str] = None,
     user: Optional[User] = Depends(get_optional_user),
     service: SurveyService = Depends(get_survey_service)
 ) -> HTMLResponse:
-    # Получаем все публичные опросы
-    all_surveys = await service.get_public_surveys()
-    
-    # Получаем рекомендации (если юзер есть)
-    recommendations = []
-    rec_ids = set()
-    
-    if user:
-        recommendations = await service.get_recommendations(user.user_id)
+    if q:
+        # Если есть запрос — ищем
+        active_surveys = await service.search_surveys(q)
+        recommendations = [] # В поиске рекомендации обычно скрывают
+    else:
+        # Если нет — обычная логика
+        all_surveys = await service.get_public_surveys()
+        recommendations = await service.get_recommendations(user.user_id) if user else []
         rec_ids = {s.survey_id for s in recommendations}
+        active_surveys = [s for s in all_surveys if s.status == SurveyStatus.active and s.survey_id not in rec_ids]
 
-    # РАЗДЕЛЯЕМ ОПРОСЫ НА СПИСКИ
-    # Активные (исключая те, что уже в рекомендациях)
-    active_surveys = [
-        s for s in all_surveys 
-        if s.status == SurveyStatus.active and s.survey_id not in rec_ids
-    ]
-    
-    # Завершенные (архив) - их в рекомендациях быть не должно, но на всякий случай фильтруем
-    completed_surveys = [
-        s for s in all_surveys 
-        if s.status in [SurveyStatus.completed, SurveyStatus.archived]
-    ]
+    completed_surveys = [] if q else [s for s in all_surveys if s.status in [SurveyStatus.completed, SurveyStatus.archived]]
 
     return templates.TemplateResponse(
         request=request,
@@ -53,7 +43,8 @@ async def read_root(
             "active_surveys": active_surveys,
             "completed_surveys": completed_surveys,
             "recommendations": recommendations,
-            "user": user
+            "user": user,
+            "search_query": q
         }
     )
 
