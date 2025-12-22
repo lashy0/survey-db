@@ -15,14 +15,8 @@ class AdminService:
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
         """Собирает всю статистику для аналитической панели."""
-        # 1. Базовые метрики
-        total_users = await self.db.scalar(select(func.count(User.user_id))) or 0
-        total_surveys = await self.db.scalar(select(func.count(Survey.survey_id))) or 0
-        total_responses = await self.db.scalar(select(func.count(SurveyResponse.response_id))) or 0
-        
-        # 2. Воронка
-        cnt_started = await self.db.scalar(select(func.count(SurveyResponse.user_id.distinct()))) or 0
-        cnt_completed = await self.db.scalar(select(func.count(SurveyResponse.user_id.distinct())).where(SurveyResponse.completed_at.is_not(None))) or 0
+        summary_res = await self.db.execute(text("SELECT * FROM v_admin_summary"))
+        stats = summary_res.mappings().one()
         
         # 3. Активность по дням
         activity_res = await self.db.execute(
@@ -95,10 +89,18 @@ class AdminService:
                 heatmap_z[d][h] = row.cnt
 
         return {
-            "kpi": {"users": total_users, "surveys": total_surveys, "responses": total_responses},
+            "kpi": {
+                "users": stats['total_users'], 
+                "surveys": stats['total_surveys'], 
+                "responses": stats['total_responses_sessions']
+            },
             "funnel": {
                 "labels": ["Регистрация", "Начали опрос", "Завершили опрос"],
-                "counts": [int(total_users), int(cnt_started), int(cnt_completed)]
+                "counts": [
+                    int(stats['total_users']), 
+                    int(stats['unique_users_started']), 
+                    int(stats['unique_users_completed'])
+                ]
             },
             "time_series": {
                 "dates": [str(row.date) for row in activity_rows],
