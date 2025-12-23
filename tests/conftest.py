@@ -9,6 +9,13 @@ from sqlalchemy.pool import NullPool
 from app.routers import general, admin, auth, users, surveys
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.deps import check_csrf
+from app.core.exceptions import (
+    not_found_handler,
+    forbidden_handler,
+    server_error_handler,
+    unauthorized_handler
+)
 from fastapi import FastAPI
 
 # Создаем тестовый движок
@@ -37,20 +44,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Создает сессию внутри транзакции.
     """
-    # 1. Подключаемся
     connection = await test_engine.connect()
-    # 2. Начинаем транзакцию
     transaction = await connection.begin()
-    
-    # 3. Привязываем сессию к этому соединению
     session = TestingSessionLocal(bind=connection)
     
-    yield session
-    
-    # 4. Откатываемся и закрываем
-    await session.close()
-    await transaction.rollback()
-    await connection.close()
+    try:
+        yield session
+    finally:
+        await session.close()
+        await transaction.rollback()
+        await connection.close()
+        await asyncio.sleep(0.01)
 
 @pytest.fixture(scope="function")
 async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
@@ -59,6 +63,11 @@ async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
     """
     # Создаем чистое приложение без middleware (чтобы избежать конфликтов циклов)
     test_app = FastAPI()
+
+    test_app.add_exception_handler(404, not_found_handler)
+    test_app.add_exception_handler(403, forbidden_handler)
+    test_app.add_exception_handler(401, unauthorized_handler)
+    test_app.add_exception_handler(500, server_error_handler)
     
     # Подключаем роутеры
     test_app.include_router(admin.router)
@@ -71,7 +80,11 @@ async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
     async def override_get_db():
         yield db_session
     
+    async def skip_csrf():
+        pass
+    
     test_app.dependency_overrides[get_db] = override_get_db
+    test_app.dependency_overrides[check_csrf] = skip_csrf
     
     # Важно: не используем base_url с http://test, так как куки могут не ставиться
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://localhost") as ac:
@@ -97,3 +110,12 @@ async def admin_token_cookies(db_session):
     
     access_token = create_access_token(data={"sub": admin.email})
     return {"access_token": access_token}
+
+@pytest.fixture(scope="session", autouse=True)
+async def shutdown_test_engine():
+    """
+    Автоматически закрывает все соединения с базой данных 
+    после завершения ВСЕХ тестов в сессии.
+    """
+    yield
+    await test_engine.dispose()

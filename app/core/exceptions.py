@@ -24,12 +24,12 @@ async def not_found_handler(request: Request, exc: StarletteHTTPException):
     """Обработчик ошибки 404"""
     user = await get_user_context(request)
     return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+        request=request,
+        name="error.html",
+        context={
             "status_code": 404,
             "title": "Страница не найдена",
-            "description": "К сожалению, запрашиваемая вами страница не существует.",
+            "description": exc.detail if exc.detail != "Not Found" else "К сожалению, запрашиваемая страница не существует.",
             "user": user
         },
         status_code=404
@@ -39,12 +39,12 @@ async def forbidden_handler(request: Request, exc: StarletteHTTPException):
     """Обработчик ошибки 403"""
     user = await get_user_context(request)
     return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+        request=request,
+        name="error.html",
+        context={
             "status_code": 403,
             "title": "Доступ запрещен",
-            "description": "У вас нет прав для просмотра этой страницы.",
+            "description": exc.detail if exc.detail != "Forbidden" else "У вас нет прав для просмотра этой страницы.",
             "user": user
         },
         status_code=403
@@ -53,12 +53,12 @@ async def forbidden_handler(request: Request, exc: StarletteHTTPException):
 async def unauthorized_handler(request: Request, exc: StarletteHTTPException):
     user = await get_user_context(request)
     return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+        request=request,
+        name="error.html",
+        context={
             "status_code": 401,
             "title": "Требуется авторизация",
-            "description": "Пожалуйста, войдите в систему, чтобы получить доступ к этой странице.",
+            "description": exc.detail if exc.detail != "Not authenticated" else "Пожалуйста, войдите в систему.",
             "user": user
         },
         status_code=401
@@ -68,9 +68,9 @@ async def server_error_handler(request: Request, exc: Exception):
     """Обработчик ошибки 500"""
     user = await get_user_context(request)
     return templates.TemplateResponse(
-        "error.html",
-        {
-            "request": request,
+        request=request,
+        name="error.html",
+        context={
             "status_code": 500,
             "title": "Ошибка сервера",
             "description": "Мы уже работаем над исправлением.",
