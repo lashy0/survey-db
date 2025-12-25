@@ -330,13 +330,18 @@ class SurveyService:
                 """)
                 res = await self.db.execute(age_query, {"qid": q.question_id})
                 rows = res.mappings().all()
+
+                total_q_answers = sum(r["cnt"] for r in rows)
                 
                 # Формируем данные для графиков
                 q_stats["data"] = {
                     "labels": [r["answer_content"] for r in rows],
                     "counts": [r["cnt"] for r in rows],
                     "avg_ages": [round(r["avg_age"] or 0, 1) for r in rows],
-                    "percentages": []
+                    "percentages": [
+                        round((r["cnt"] / total_q_answers * 100), 1) if total_q_answers > 0 else 0 
+                        for r in rows
+                    ]
                 }
                 
             elif q.question_type == QuestionType.text_answer:

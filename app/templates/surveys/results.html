@@ -29,7 +29,7 @@
                             <div class="w-2.5 h-2.5 bg-indigo-400 rounded-sm"></div> Вы
                         </span>
                         <span class="flex items-center gap-1">
-                            <div class="w-0.5 h-2.5 bg-indigo-300 shadow-[0_0_3px_white]"></div> Рынок (Среднее)
+                            <div class="w-1 h-2.5 bg-orange-500 shadow-[0_0_3px_rgba(249,115,22,0.5)]"></div> Рынок (Среднее)
                         </span>
                     </div>
                 </div>
@@ -50,12 +50,11 @@
                         <div class="relative w-full bg-white/10 rounded-full h-3 border border-white/5 flex items-center">
                             
                             <!-- Вертикальная метка СРЕДНЕГО (Рынок) ровно посередине -->
-                            <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-indigo-300 z-20 shadow-[0_0_5px_white]">
+                            <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-orange-500 z-20 shadow-[0_0_8px_rgba(249,115,22,0.8)]">
                                 <!-- Подпись над меткой (необязательно) -->
                                 <span class="absolute -top-4 left-1/2 -translate-x-1/2 text-[8px] text-indigo-300 font-bold uppercase">Avg</span>
                             </div>
-
-                            {# Рассчитываем ширину вашей полоски #}
+                            
                             {% set raw_pct = (b.survey_value / (b.category_avg + 0.001) * 50) %}
                             {% set pct = raw_pct if raw_pct < 100 else 100 %}
                             
