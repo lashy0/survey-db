@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432" # Пробрасываем порт на ваш ПК
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  local_postgres_data:

@@ -2,6 +2,10 @@ services:
   db:
     image: postgres:15-alpine
     restart: always
+    networks:
+      - survey_net
+    ports:
+      - "5432:5432"
     deploy:
       resources:
         limits:
@@ -23,6 +27,8 @@ services:
   app:
     build: .
     restart: always
+    networks:
+      - survey_net
     depends_on:
       db:
         condition: service_healthy
@@ -34,12 +40,25 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: always
+    networks:
+      - survey_net
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - app
-    command: caddy reverse-proxy --from your-domain.com --to app:8000
+    command: caddy reverse-proxy --from ${DOMAIN} --to app:8000
+
+networks:
+  survey_net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
