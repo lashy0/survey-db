@@ -14,12 +14,14 @@ utilizing HTMX for dynamic frontend interactions and Plotly for analytics.
 │   ├── services/           # Business logic
 │   ├── templates/          # Jinja2 HTML templates (HTMX + Tailwind)
 │   └── main.py             # Application entry point
+├── scripts/
+│   ├── seed.py             # Database seeder CLI
+├── data/                   # JSON data files (e.g., surveys.json)
 ├── alembic/                # Database migrations
 ├── sql/                    # Raw SQL queries for educational tasks (Analysis, Optimization)
 ├── tests/                  # Pytest suite
 ├── docker-compose.prod.yml # Production setup (App + DB + Caddy)
 ├── docker-compose.dev.yml  # Development setup (DB only)
-├── seed.py                 # Script to populate DB with dummy data
 └── pyproject.toml          # Dependencies (managed by uv)
 ```
 
@@ -62,11 +64,11 @@ docker-compose -f docker-compose.prod.yml up -d --build
 Must be run inside the container.
 
 ```bash
-# Apply database shema
-docker-compose exec app alembic upgrade head
+# Apply database schema
+docker compose -f docker-compose.prod.yml exec app alembic upgrade head
 
 # Fill DB with test users and surveys
-docker-compose exec app python seed.py
+docker compose -f docker-compose.prod.yml exec app python -m scripts.seed
 ```
 
 #### 3. Access
@@ -95,14 +97,23 @@ Use the dev-specific compose file.
 docker-compose -f docker-compose.dev.yml up -d
 ```
 
-#### 3. Run Migrations and Seed
+#### 3. Run Migrations
 
 ```bash
 uv run alembic upgrade head
-uv run seed.py
 ```
 
-#### 4. Run the Server
+#### 4. Seed Database
+
+```bash
+# Default (50 bots)
+uv run python -m scripts.seed
+
+# Custom options
+uv run python -m scripts.seed --users 10 --no-clean
+```
+
+#### 5. Run the Server
 
 ```bash
 uv run uvicorn app.main:app --reload
@@ -126,11 +137,19 @@ uv run pytest
 Stop and remove containers (keep data):
 
 ```bash
-docker-compose down
+# For Dev
+docker-compose -f docker-compose.dev.yml down
+
+# For Prod
+docker-compose -f docker-compose.prod.yml down
 ```
 
 Stop and remove everything (delete data):
 
 ```bash
-docker-compose down -v
+# For Dev
+docker-compose -f docker-compose.dev.yml down -v
+
+# For Prod
+docker-compose -f docker-compose.prod.yml down -v
 ```
